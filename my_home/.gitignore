@@ -1,0 +1,39 @@
+.vscode/
+.idea/
+/log/
+docker_prod/zigbee2mqtt/configuration.yaml
+zigbee2mqtt/coordinator_backup.json
+zigbee2mqtt/log/
+
+wget.log
+yarn-error.log
+npm-debug.log*
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+logs/
+
+.cache/
+.local/
+.npm/
+.yarn/
+
+
+# Back
+__pycache__/
+/backend/.pytest_cache
+*.db
+*.db.backup
+
+# Front
+frontend/node_modules/
+yarn.lock
+
+data/
+
+# Повторно разрешить одиночные SVG-файлы на верхнем уровне (важно после /**)
+#!store/fonts/icons/*.svg
+
+backup/
+

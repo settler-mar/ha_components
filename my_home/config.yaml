@@ -1,0 +1,44 @@
+name: "MY_HOME-devices"
+version: "0.0.4"
+slug: "my_home_devices"
+description: "Custom addon for managing devices in MY_HOME environment"
+#url: "https://github.com/yourname/my_custom_addon"
+startup: services
+boot: auto
+
+options:
+  local_network: "192.168.0.1/24"
+  gsheet: ""
+  scan_timeout: 2
+  is_fast_scan: true
+  save_config_hour: 1
+  save_logs_period: 2
+  save_logs_hour: 1
+  save_logs_minute: 1
+
+schema:
+  local_network: str
+  gsheet: str
+  scan_timeout: int
+  is_fast_scan: bool
+  save_config_hour: int
+  save_logs_period: int
+  save_logs_hour: int
+  save_logs_minute: int
+
+#host_network: true
+ingress: true
+ingress_port: 3000
+panel_icon: mdi:chip
+panel_title: "My Devices"
+
+init: false
+hassio_api: true
+homeassistant_api: true
+auth_api: true
+stdin: false
+
+arch:
+  - amd64
+  - aarch64
+  - armv7
