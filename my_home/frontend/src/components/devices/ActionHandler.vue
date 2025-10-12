@@ -20,8 +20,11 @@
         :loading="loadingAction === action.name"
         @click="handleAction(action)"
         class="mr-1"
+        :class="{ 'ha-config-active': action.name === 'НАСТРОЙКА HA' && props.haConfigMode }"
         :title="action.name"
         :disabled="loadingAction === action.name"
+        :color="action.name === 'НАСТРОЙКА HA' && props.haConfigMode ? 'orange' : undefined"
+        :variant="action.name === 'НАСТРОЙКА HA' && props.haConfigMode ? 'elevated' : 'outlined'"
       >
         <v-icon v-if="action.icon" :icon="action.icon"/>
         <span v-else>{{ action.name }}</span>
@@ -149,10 +152,14 @@ import {objectToFlat} from '@/utils/array'
 
 const props = defineProps({
   actions: Array,
-  params: Object
+  params: Object,
+  haConfigMode: {
+    type: Boolean,
+    default: false
+  }
 })
 
-const emit = defineEmits(['executed'])
+const emit = defineEmits(['executed', 'toggle-ha-config'])
 const messageStore = useMessageStore()
 
 const loadingAction = ref(null)
@@ -180,6 +187,12 @@ function showState(action) {
 
 function handleAction(action) {
   activeAction.value = action
+
+  // Специальная обработка для настройки HA
+  if (action.name === 'НАСТРОЙКА HA') {
+    emit('toggle-ha-config')
+    return
+  }
 
   if (action.type === 'json_form') return (jsonFormDialog.value = true)
   if (action.type === 'table_modal') return (tableModalDialog.value = true)
@@ -266,3 +279,23 @@ async function executeAction(action, body = {}) {
   }
 }
 </script>
+
+<style scoped>
+/* Стили для кнопки HA в режиме редактирования */
+.ha-config-active {
+  animation: ha-pulse 2s infinite;
+  box-shadow: 0 0 8px rgba(255, 152, 0, 0.5);
+}
+
+@keyframes ha-pulse {
+  0% {
+    box-shadow: 0 0 8px rgba(255, 152, 0, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(255, 152, 0, 0.8);
+  }
+  100% {
+    box-shadow: 0 0 8px rgba(255, 152, 0, 0.5);
+  }
+}
+</style>

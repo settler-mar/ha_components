@@ -12,6 +12,10 @@ wsproto==1.2.0 # библиотека для работы с WebSocket
 ssdpy==0.4.1 # библиотека для работы с SSDP
 aiohttp==3.11.14 # библиотека для работы с HTTP
 requests==2.32.3 # библиотека для работы с HTTP
+pyyaml==6.0.1 # библиотека для работы с YAML
+passlib[bcrypt]==1.7.4 # библиотека для хеширования паролей
+bcrypt==4.0.1 # библиотека для хеширования паролей
+cryptography==41.0.7 # библиотека для криптографии
 google-api-python-client # библиотека для работы с Google API
 google-auth-httplib2 # библиотека для работы с Google API
 google-auth-oauthlib # библиотека для работы с Google API

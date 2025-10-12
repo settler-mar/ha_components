@@ -68,7 +68,7 @@ home_assiastent_addons/
 ```bash
 cd my_home/backend
 pip install -r requirements.txt
-python websrv.py
+uvicorn websrv:app --reload --host 0.0.0.0 --port 3000
 ```
 
 #### Frontend
@@ -95,7 +95,18 @@ local_network: "192.168.0.1/24"    # Локальная сеть для скан
 scan_timeout: 2                     # Таймаут сканирования
 is_fast_scan: true                  # Быстрое сканирование
 save_config_hour: 1                 # Период сохранения конфигурации
+
+# Настройки для бэкапа - только папки данных (без Docker образа)
+map:
+  - data
+  - data_src
 ```
+
+### Настройка бэкапа
+
+Для уменьшения размера бэкапа с ~600МБ до ~2МБ (исключение Docker образа) в `config.yaml` добавлен параметр `map`, который указывает Home Assistant включать в бэкап только папки данных.
+
+Подробные инструкции по настройке бэкапа см. в файле `my_home/BACKUP_SETUP.md`.
 
 ## API Endpoints
 

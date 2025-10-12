@@ -13,6 +13,8 @@
 
       <ActionHandler
         :actions="actions"
+        :ha-config-mode="haConfigMode"
+        @toggle-ha-config="toggleHAConfig"
       />
     </v-toolbar>
 
@@ -20,12 +22,22 @@
       <v-row>
         <v-col
           cols="12"
-          sm="6"
-          md="4"
+          xs="12"
+          sm="12"
+          md="6"
+          lg="4"
+          xl="3"
           v-for="device in devices || []"
           :key="device.id"
         >
-          <DeviceCard :device="device" :readonly="readonly" @edit="editDevice"/>
+          <DeviceCard 
+            :device="device" 
+            :readonly="readonly" 
+            :ha-config-mode="haConfigMode"
+            @edit="editDevice"
+            @toggle-ha-config="toggleHAConfig"
+            @device-updated="handleDeviceUpdate"
+          />
         </v-col>
         <v-col
           v-if="!devices?.length"
@@ -60,10 +72,11 @@ const props = defineProps({
   readonly: Boolean,
 })
 
-const emit = defineEmits(['edit', 'deleted', 'refresh', 'action'])
+const emit = defineEmits(['edit', 'deleted', 'refresh', 'action', 'device-updated'])
 
 const addDeviceDialog = ref(false)
 const connectionData = ref({})
+const haConfigMode = ref(false)
 
 
 const connectionDef = computed(() => {
@@ -78,6 +91,27 @@ const connectionIcon = computed(() => {
 const devicesParams = {
   'code': {
     'readonly': true,
+  },
+  'ha_integration_enabled': {
+    'name': 'ha_integration_enabled',
+    'type': 'boolean',
+    'label': 'Интеграция с Home Assistant',
+    'description': 'Включить интеграцию с Home Assistant',
+    'default': true
+  },
+  'ha_entity_prefix': {
+    'name': 'ha_entity_prefix',
+    'type': 'text',
+    'label': 'Префикс сущностей HA',
+    'description': 'Префикс для всех сущностей этого устройства в Home Assistant',
+    'default': null
+  },
+  'ha_publish_device_online': {
+    'name': 'ha_publish_device_online',
+    'type': 'boolean',
+    'label': 'Публиковать статус устройства',
+    'description': 'Создаёт сущность для отслеживания онлайн статуса устройства',
+    'default': true
   },
   'model': {
     'readonly': true,
@@ -145,6 +179,22 @@ const devicesParams = {
 }
 
 const actions = [{
+  "name": "НАСТРОЙКА HA",
+  "type": "request",
+  "scope": "connection",
+  "icon": "mdi-home-assistant",
+  "endpoint": "/api/ha/toggle-config",
+  "method": "POST",
+  "input": {
+    "enabled": {
+      "name": "enabled",
+      "type": "boolean",
+      "description": "Включить режим настройки HA",
+      "required": true,
+      "default": false
+    }
+  }
+}, {
   "name": "Устройства MyHome",
   "type": "table_modal",
   "scope": "connection",
@@ -213,8 +263,30 @@ const actions = [{
 }]
 
 
-function onDeviceAdded() {
+function onDeviceAdded(deviceData) {
   addDeviceDialog.value = false
+  
+  // Сохраняем HA настройки в params
+  if (deviceData.ha_integration_enabled !== undefined || 
+      deviceData.ha_entity_prefix !== undefined || 
+      deviceData.ha_publish_device_online !== undefined) {
+    
+    const haSettings = {
+      enabled: deviceData.ha_integration_enabled ?? true,
+      entityPrefix: deviceData.ha_entity_prefix || deviceData.name || 'device',
+      publishDeviceOnline: deviceData.ha_publish_device_online ?? true
+    }
+    
+    // Обновляем params устройства
+    deviceData.params = deviceData.params || {}
+    deviceData.params.ha_integration = haSettings
+    
+    // Удаляем временные поля
+    delete deviceData.ha_integration_enabled
+    delete deviceData.ha_entity_prefix
+    delete deviceData.ha_publish_device_online
+  }
+  
   emit('refresh')
 }
 
@@ -224,7 +296,15 @@ function openDialog(device) {
   // convert device to a new object
   // {'id': null, 'name': '', 'params': {'a':12}} => {'id': null, 'name': '', 'params.a': 12, 'connection_id': connection.id}
 
-  connectionData.value = {...device}
+  const deviceData = {...device}
+  
+  // Обрабатываем HA настройки
+  const haSettings = device.params?.ha_integration || {}
+  deviceData.ha_integration_enabled = haSettings.enabled ?? true
+  deviceData.ha_entity_prefix = haSettings.entityPrefix || device.name || 'device'
+  deviceData.ha_publish_device_online = haSettings.publishDeviceOnline ?? true
+  
+  connectionData.value = deviceData
 }
 
 function editDevice(device) {
@@ -239,4 +319,44 @@ function handleAction(action) {
 function refresh() {
   emit('refresh')
 }
+
+function toggleHAConfig() {
+  haConfigMode.value = !haConfigMode.value
+}
+
+function handleDeviceUpdate(updatedDevice) {
+  // Пробрасываем событие обновления устройства выше
+  emit('device-updated', updatedDevice)
+}
 </script>
+
+<style scoped>
+/* Адаптивные стили для ConnectionCard */
+@media (max-width: 600px) {
+  .v-card-text {
+    padding: 8px;
+  }
+  
+  .v-row {
+    margin: -4px;
+  }
+  
+  .v-col {
+    padding: 4px;
+  }
+}
+
+@media (max-width: 400px) {
+  .v-card-text {
+    padding: 4px;
+  }
+  
+  .v-row {
+    margin: -2px;
+  }
+  
+  .v-col {
+    padding: 2px;
+  }
+}
+</style>

@@ -59,13 +59,16 @@ class ConnectionManager:
       self.active_connections.remove(websocket)
 
   async def broadcast(self, data: dict, permission: str = 'all'):
-    # todo send data to all clients by permission
+    # Отправляем всем активным клиентам без подписки
     for connection in self.active_connections:
       try:
-        await asyncio.create_task(connection.send_text(json.dumps(data, default=serialize_datetime)))
+        json_data = json.dumps(data, default=serialize_datetime)
+        await asyncio.create_task(connection.send_text(json_data))
       except WebSocketDisconnect:
         log_print("Disconnecting", connection.client.host)
         self.disconnect(connection)
+      except Exception as e:
+        print(f"Error sending to client: {e}")
 
   def broadcast_log(self,
                     text: str = None,

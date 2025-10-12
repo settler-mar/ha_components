@@ -15,8 +15,32 @@ function setMeta(route, parentPath = '') {
   return route
 }
 
+// Функция для определения базового пути в зависимости от контекста
+function getBasePath() {
+  const currentPath = window.location.pathname;
+  let basePath;
+  
+  // Если мы в Home Assistant ingress, используем полный путь
+  if (currentPath.includes('/api/hassio_ingress/')) {
+    basePath = currentPath;
+    console.log(`[Router] Ingress mode (new): base path = ${basePath}`);
+  }
+  // Если мы в старом формате ingress
+  else if (currentPath.includes('/hassio/ingress/')) {
+    basePath = '/hassio/ingress/local_my_home_devices/';
+    console.log(`[Router] Ingress mode (old): base path = ${basePath}`);
+  }
+  // Иначе используем корневой путь
+  else {
+    basePath = '/';
+    console.log(`[Router] Direct mode: base path = ${basePath}`);
+  }
+  
+  return basePath;
+}
+
 let router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(getBasePath()),
   extendRoutes(routes) {
     return [
       ...routes.map(route => setMeta(route)),

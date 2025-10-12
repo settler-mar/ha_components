@@ -54,18 +54,25 @@ class ConfigVersionManager:
     self.config_dir = config_dir
     self.backup_root = os.path.realpath(os.path.join(backup_root, str(device_id)))
     print(self.backup_root)
-    self.log_file = os.path.join(self.backup_root, 'log.json')
+    self.log_file = os.path.join(self.backup_root, 'backup.log')
+    self.old_log_file = os.path.join(self.backup_root, 'log.json')
 
     os.makedirs(self.backup_root, exist_ok=True)
+    
+    # Миграция старого log.json в backup.log
+    self._migrate_old_log_file()
+    
     if not os.path.exists(self.log_file):
-      with open(self.log_file, 'w') as f:
-        json.dump([], f)
+      with open(self.log_file, 'w', encoding='utf-8') as f:
+        f.write("")  # Создаем пустой текстовый файл
 
   def fetch_file_list(self):
     url = f"{self.base_url}/list?dir={self.config_dir}"
     resp = requests.get(url)
     resp.raise_for_status()
-    return resp.json()  # Ожидается список путей
+    file_list = resp.json()  # Ожидается список путей
+    print(f"[ConfigVersionManager] ({self.device_id}) Fetched {len(file_list)} files from {url}")
+    return file_list
 
   def download_file(self, path):
     print('download file', path)
@@ -77,7 +84,7 @@ class ConfigVersionManager:
   def get_latest_backup_dir(self):
     backups = sorted(
       [d for d in os.listdir(self.backup_root)
-       if os.path.isdir(os.path.join(self.backup_root, d)) and d != 'log.json'],
+       if os.path.isdir(os.path.join(self.backup_root, d)) and d not in ['log.json', 'backup.log']],
       reverse=True
     )
     if backups:
@@ -87,18 +94,175 @@ class ConfigVersionManager:
   def file_hash(self, content):
     return hashlib.md5(content).hexdigest()
 
+  def _migrate_old_log_file(self):
+    """
+    Миграция старого log.json в новый формат backup.log
+    """
+    if not os.path.exists(self.old_log_file):
+      return  # Нет старого файла для миграции
+    
+    if os.path.exists(self.log_file):
+      # Если новый файл уже существует, удаляем старый
+      try:
+        os.remove(self.old_log_file)
+        print(f"[ConfigVersionManager] Removed old log.json for device {self.device_id}")
+      except Exception as e:
+        print(f"[ConfigVersionManager] Error removing old log.json for device {self.device_id}: {e}")
+      return
+    
+    try:
+      # Читаем старый JSON файл
+      with open(self.old_log_file, 'r', encoding='utf-8') as f:
+        old_data = json.load(f)
+      
+      # Конвертируем в новый текстовый формат
+      with open(self.log_file, 'w', encoding='utf-8') as f:
+        for entry in old_data:
+          timestamp = entry.get('timestamp', '')
+          changed_files = entry.get('changed_files', [])
+          files_str = ', '.join(changed_files) if changed_files else 'No changes'
+          f.write(f"{timestamp}: {files_str}\n")
+      
+      # Удаляем старый файл после успешной миграции
+      os.remove(self.old_log_file)
+      
+      print(f"[ConfigVersionManager] Migrated log.json to backup.log for device {self.device_id} ({len(old_data)} entries)")
+      
+    except Exception as e:
+      print(f"[ConfigVersionManager] Error migrating log.json for device {self.device_id}: {e}")
+      # В случае ошибки создаем пустой новый файл
+      try:
+        with open(self.log_file, 'w', encoding='utf-8') as f:
+          f.write("")
+      except Exception:
+        pass
+
   def load_history(self):
-    with open(self.log_file, 'r') as f:
-      return json.load(f)
+    """Загружаем историю из текстового файла"""
+    if not os.path.exists(self.log_file):
+      return []
+    
+    history = []
+    with open(self.log_file, 'r', encoding='utf-8') as f:
+      for line in f:
+        line = line.strip()
+        if line:
+          try:
+            # Парсим строку формата: "TIMESTAMP: changed_files"
+            if ': ' in line:
+              timestamp_str, files_str = line.split(': ', 1)
+              history.append({
+                'timestamp': timestamp_str,
+                'changed_files': files_str.split(', ') if files_str else []
+              })
+          except Exception as e:
+            print(f"Error parsing log line: {line}, error: {e}")
+    return history
 
   def save_history_entry(self, timestamp, changed_files):
-    history = self.load_history()
-    history.append({
-      'timestamp': timestamp,
-      'changed_files': changed_files
-    })
-    with open(self.log_file, 'w') as f:
-      json.dump(history, f, indent=2)
+    """Сохраняем запись в текстовом формате"""
+    files_str = ', '.join(changed_files) if changed_files else 'No changes'
+    log_line = f"{timestamp}: {files_str}\n"
+    
+    with open(self.log_file, 'a', encoding='utf-8') as f:
+      f.write(log_line)
+    
+    # Обновляем время бэкапа в параметрах устройства
+    self._update_device_backup_time(timestamp, changed_files)
+  
+  def _update_device_backup_time(self, timestamp, changed_files):
+    """Обновляет время последнего бэкапа в параметрах устройства"""
+    try:
+      from utils.db_utils import db_session
+      from db_models.devices import Devices as DbDevices
+      
+      with db_session() as db:
+        device = db.query(DbDevices).filter(DbDevices.id == self.device_id).first()
+        if device:
+          if not device.params:
+            device.params = {}
+          device.params['last_backup_time'] = timestamp
+          device.params['last_backup_check'] = timestamp
+          
+          # Добавляем файлы в список загруженных (уникальные значения)
+          uploaded_files = device.params.get('uploaded_files', [])
+          for file in changed_files:
+            if file not in uploaded_files:
+              uploaded_files.append(file)
+          device.params['uploaded_files'] = uploaded_files
+          
+          db.commit()
+          
+          # Обновляем объект из БД
+          db.refresh(device)
+          
+          # Отправляем WebSocket уведомление об обновлении устройства
+          self._broadcast_device_update(self.device_id, device.to_dict())
+    except Exception as e:
+      print(f"Error updating device backup time: {e}")
+
+  def _update_device_backup_time(self, device_id: int, has_changes: bool = False, changed_files_count: int = 0):
+    """
+    Обновляет время последнего бэкапа в device.params
+    """
+    try:
+      with db_session() as db:
+        device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+        if device:
+          if not device.params:
+            device.params = {}
+          
+          current_time = datetime.now().isoformat()
+          device.params['last_backup_time'] = current_time
+          device.params['last_backup_check'] = current_time
+          
+          if has_changes:
+            device.params['last_backup_files_count'] = changed_files_count
+          
+          db.commit()
+          db.refresh(device)
+          
+          # Отправляем WebSocket уведомление об обновлении
+          self._broadcast_device_update(device_id, device.to_dict())
+          
+          print(f"[ConfigVersionManager] Updated backup time for device {device_id}")
+          
+    except Exception as e:
+      print(f"[ConfigVersionManager] Error updating backup time for device {device_id}: {e}")
+
+  def _broadcast_device_update(self, device_id: int, device_data: dict):
+    """
+    Отправляет WebSocket уведомление об обновлении устройства
+    """
+    try:
+      from utils.socket_utils import connection_manager
+      import asyncio
+      
+      ws_data = {
+        "type": "device",
+        "action": "update",
+        "data": {
+          "device_id": device_id,
+          "device": device_data,
+          "ts": datetime.now().timestamp()
+        }
+      }
+      
+      # Запускаем broadcast в event loop
+      try:
+        loop = asyncio.get_running_loop()
+        if loop and loop.is_running():
+          asyncio.create_task(connection_manager.broadcast(ws_data))
+        else:
+          loop.run_until_complete(connection_manager.broadcast(ws_data))
+      except RuntimeError:
+        # Если нет активного loop, запускаем в новом потоке
+        def broadcast_update():
+          asyncio.run(connection_manager.broadcast(ws_data))
+        threading.Thread(target=broadcast_update, daemon=True).start()
+      
+    except Exception as e:
+      print(f"Error broadcasting device update: {e}")
 
   def run_backup_if_changed(self):
     file_list = self.fetch_file_list()
@@ -107,8 +271,20 @@ class ConfigVersionManager:
     current_files = {}
     changed_files = []
 
-    for file_path in file_list:
-      file_path = file_path.get('name')
+    for item in file_list:
+      # Обрабатываем как строку или как объект с полем name
+      if isinstance(item, str):
+        file_path = item
+      elif isinstance(item, dict) and 'name' in item:
+        file_path = item['name']
+      else:
+        print(f"[ConfigVersionManager] ({self.device_id}) Skipping invalid file item: {item}")
+        continue
+      
+      # Убираем ведущий слеш если есть
+      if isinstance(file_path, str) and file_path.startswith('/'):
+        file_path = file_path[1:]
+      
       content = self.download_file(file_path)
       current_files[file_path] = content
 
@@ -140,8 +316,72 @@ class ConfigVersionManager:
 
       self.save_history_entry(timestamp, changed_files)
       print(f"[ConfigVersionManager] ({self.device_id}) Изменения сохранены: {timestamp}")
+      
+      # Обновляем время бэкапа в базе данных
+      self._update_device_backup_time(self.device_id, has_changes=True, changed_files_count=len(changed_files))
+      
+      return {"has_changes": True, "changed_files": len(changed_files), "files": changed_files}
     else:
       print(f"[ConfigVersionManager] ({self.device_id}) Изменений не обнаружено.")
+      
+      # Обновляем время проверки бэкапа (даже если изменений нет)
+      self._update_device_backup_time(self.device_id, has_changes=False, changed_files_count=0)
+      
+      return {"has_changes": False, "changed_files": 0, "files": []}
+
+  def run_forced_backup(self):
+    """
+    Форсированный бэкап всех файлов (независимо от изменений)
+    """
+    file_list = self.fetch_file_list()
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    backup_dir = os.path.join(self.backup_root, timestamp)
+    os.makedirs(backup_dir, exist_ok=True)
+    
+    backed_up_files = []
+    
+    for item in file_list:
+      # Обрабатываем как строку или как объект с полем name
+      if isinstance(item, str):
+        path = item
+      elif isinstance(item, dict) and 'name' in item:
+        path = item['name']
+      else:
+        print(f"[ConfigVersionManager] ({self.device_id}) Skipping invalid file item: {item}")
+        continue
+      
+      # Убираем ведущий слеш если есть
+      if isinstance(path, str) and path.startswith('/'):
+        path = path[1:]
+      
+      try:
+        content = self.download_file(path)
+        file_path = os.path.join(backup_dir, path.replace('/', '_'))
+        
+        with open(file_path, 'wb') as f:
+          f.write(content)
+        
+        backed_up_files.append(path)
+        print(f"[ConfigVersionManager] ({self.device_id}) Forced backup: {path}")
+        
+      except Exception as e:
+        print(f"[ConfigVersionManager] ({self.device_id}) Error backing up {path}: {e}")
+    
+    if backed_up_files:
+      self.save_history_entry(timestamp, backed_up_files)
+      print(f"[ConfigVersionManager] ({self.device_id}) Forced backup completed: {len(backed_up_files)} files")
+      
+      # Обновляем время бэкапа в базе данных
+      self._update_device_backup_time(self.device_id, has_changes=True, changed_files_count=len(backed_up_files))
+      
+      return {"has_changes": True, "changed_files": len(backed_up_files), "files": backed_up_files}
+    else:
+      print(f"[ConfigVersionManager] ({self.device_id}) Forced backup failed: no files backed up")
+      
+      # Обновляем время проверки бэкапа (даже если бэкап не удался)
+      self._update_device_backup_time(self.device_id, has_changes=False, changed_files_count=0)
+      
+      return {"has_changes": False, "changed_files": 0, "files": []}
 
 
 class MyHomeClass(SingletonClass):
@@ -308,15 +548,33 @@ class MyHomeClass(SingletonClass):
     data = [line.strip().split(',\t') for line in content.split('\n') if line.strip()]
     data = [[*line[:-1], line[-1].replace('.', ',')] for line in data]
     try:
-      GoogleConnector().gsheet_add_row(self.sheet, '.'.join(name.split('.')[:-1]), data)
-      return True
+      google_connector = GoogleConnector(False)  # Не строгий режим
+      if google_connector and google_connector.enabled:
+        google_connector.gsheet_add_row(self.sheet, '.'.join(name.split('.')[:-1]), data)
+        return True
+      else:
+        print("[Logs] GoogleConnector недоступен, пропускаем сохранение в gsheet")
+        return False
     except Exception as e:
       print(f"[Logs] Ошибка при сохранении в gsheet: {e}")
       return False
 
   def _save_logs(self):
+    # Логируем начало процесса сохранения логов
+    connection_manager.broadcast_log(
+      text="Начало сохранения логов с устройств",
+      level="info",
+      class_name="MyHomeClass",
+      action="save_logs_start"
+    )
+    
+    total_devices = 0
+    processed_devices = 0
+    total_logs = 0
+    saved_logs = 0
+    
     for device_id, device in self._devices.items():
-      # print(device.__dict__)
+      total_devices += 1
       params = device.params
 
       if not params.get("save_logs"):
@@ -331,13 +589,25 @@ class MyHomeClass(SingletonClass):
 
       ip = params.get("ip")
       base_url = f"http://{ip}"
-      print(f"[Logs] [local_save] Обработка логов с {device_id} ({ip})")
+      device_name = device.name or f"Device {device_id}"
+      
+      # Логируем начало обработки устройства
+      connection_manager.broadcast_log(
+        text=f"Обработка логов с устройства {device_name} ({ip})",
+        level="info",
+        device_id=device_id,
+        class_name="MyHomeClass",
+        action="device_logs_start"
+      )
 
       try:
         # Получаем список файлов из /logs
         response = requests.get(f"{base_url}/list?dir=/logs", timeout=5)
         response.raise_for_status()
         entries = response.json()
+
+        device_logs_count = 0
+        device_saved_count = 0
 
         for entry in entries:
           if entry.get("type") != "file":
@@ -346,6 +616,9 @@ class MyHomeClass(SingletonClass):
           if not name.endswith(".txt") or name in ['_.txt', 'clean.txt']:
             continue
 
+          total_logs += 1
+          device_logs_count += 1
+          
           file_path = f"/logs/{name}"
           file_url = f"{base_url}{file_path}"
 
@@ -354,22 +627,87 @@ class MyHomeClass(SingletonClass):
           log_resp.raise_for_status()
           content = log_resp.text
 
-          if not method(name, content, device_id, ip):
-            print('[Logs] Не удалось сохранить лог', name, device_id)
-            return
+          if method(name, content, device_id, ip):
+            saved_logs += 1
+            device_saved_count += 1
+            
+            # Логируем успешное сохранение лога
+            connection_manager.broadcast_log(
+              text=f"Лог {name} сохранен с устройства {device_name}",
+              level="info",
+              device_id=device_id,
+              class_name="MyHomeClass",
+              action="log_saved",
+              value=name
+            )
+          else:
+            # Логируем ошибку сохранения лога
+            connection_manager.broadcast_log(
+              text=f"Не удалось сохранить лог {name} с устройства {device_name}",
+              level="error",
+              device_id=device_id,
+              class_name="MyHomeClass",
+              action="log_save_failed",
+              value=name
+            )
 
-            # Удаляем лог с устройства, если разрешено
+          # Удаляем лог с устройства, если разрешено
           if params.get("remove_logs", True):
             delete_resp = requests.delete(
               f"{base_url}/edit", params={"path": file_path}, timeout=5
             )
             if delete_resp.status_code == 200:
-              print(f"[Logs] {name} удалён с {device_id}")
+              # Логируем удаление лога с устройства
+              connection_manager.broadcast_log(
+                text=f"Лог {name} удален с устройства {device_name}",
+                level="info",
+                device_id=device_id,
+                class_name="MyHomeClass",
+                action="log_deleted",
+                value=name
+              )
             else:
-              print(f"[Logs] Не удалось удалить {name} с {device_id}: {delete_resp.status_code}")
+              # Логируем ошибку удаления лога
+              connection_manager.broadcast_log(
+                text=f"Не удалось удалить лог {name} с устройства {device_name}: {delete_resp.status_code}",
+                level="warning",
+                device_id=device_id,
+                class_name="MyHomeClass",
+                action="log_delete_failed",
+                value=name
+              )
+
+        processed_devices += 1
+        
+        # Логируем завершение обработки устройства
+        connection_manager.broadcast_log(
+          text=f"Обработка логов устройства {device_name} завершена: {device_saved_count}/{device_logs_count} логов сохранено",
+          level="info",
+          device_id=device_id,
+          class_name="MyHomeClass",
+          action="device_logs_completed",
+          value=f"{device_saved_count}/{device_logs_count}"
+        )
 
       except Exception as e:
-        print(f"[Logs] Ошибка при обработке {device_id}: {e}")
+        # Логируем ошибку обработки устройства
+        connection_manager.broadcast_log(
+          text=f"Ошибка при обработке логов устройства {device_name}: {str(e)}",
+          level="error",
+          device_id=device_id,
+          class_name="MyHomeClass",
+          action="device_logs_error",
+          value=str(e)
+        )
+    
+    # Логируем завершение процесса сохранения логов
+    connection_manager.broadcast_log(
+      text=f"Сохранение логов завершено: {saved_logs}/{total_logs} логов сохранено с {processed_devices}/{total_devices} устройств",
+      level="info",
+      class_name="MyHomeClass",
+      action="save_logs_completed",
+      value=f"{saved_logs}/{total_logs} logs from {processed_devices}/{total_devices} devices"
+    )
 
   def _save_config(self):
     self.save_config_process = True
@@ -389,6 +727,133 @@ class MyHomeClass(SingletonClass):
       except Exception as e:
         print(f"[Configs] Ошибка при обработке {device_id}: {e}")
     self.save_config_process = False
+
+  def _save_logs_for_device(self, device_id: int, device_ip: str):
+    """
+    Обертка для вызова сохранения логов конкретного устройства
+    """
+    return self.save_logs_for_device(device_id, device_ip)
+
+  def save_logs_for_device(self, device_id: int, ip: str):
+    """Сохранение логов для конкретного устройства (для ручного запуска)"""
+    import requests
+    from utils.socket_utils import connection_manager
+    
+    print(f"[my home] Manual logs export for device {device_id} ({ip})")
+    
+    with db_session() as db:
+      device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+      if not device:
+        print(f"[my home] Device {device_id} not found")
+        return False
+      
+      device_name = device.name
+      base_url = f"http://{ip}"
+    
+    # Используем локальное сохранение как основной метод
+    method = self._save_logs_local
+    saved_logs = 0
+    total_logs = 0
+    
+    try:
+      connection_manager.broadcast_log(
+        text=f"Ручной экспорт логов с устройства {device_name} ({ip})",
+        level="info",
+        device_id=device_id,
+        class_name="MyHomeClass",
+        action="manual_logs_export_start"
+      )
+      
+      # Получаем список файлов из /logs
+      response = requests.get(f"{base_url}/list?dir=/logs", timeout=5)
+      response.raise_for_status()
+      entries = response.json()
+      
+      for entry in entries:
+        if entry.get("type") != "file":
+          continue
+        name = entry.get("name")
+        if not name.endswith(".txt") or name in ['_.txt', 'clean.txt']:
+          continue
+        
+        total_logs += 1
+        
+        file_path = f"/logs/{name}"
+        file_url = f"{base_url}{file_path}"
+        
+        # Скачиваем лог
+        log_resp = requests.get(file_url, timeout=5)
+        log_resp.raise_for_status()
+        content = log_resp.text
+        
+        if method(name, content, device_id, ip):
+          saved_logs += 1
+          
+          connection_manager.broadcast_log(
+            text=f"Лог {name} сохранен с устройства {device_name}",
+            level="info",
+            device_id=device_id,
+            class_name="MyHomeClass",
+            action="log_saved",
+            value=name
+          )
+      
+      connection_manager.broadcast_log(
+        text=f"Ручной экспорт завершен: {saved_logs} из {total_logs} логов сохранено с устройства {device_name}",
+        level="info",
+        device_id=device_id,
+        class_name="MyHomeClass",
+        action="manual_logs_export_complete",
+        value=f"{saved_logs}/{total_logs}"
+      )
+      
+      # Обновляем время экспорта логов в базе данных
+      self._update_device_logs_export_time(device_id, exported_logs_count=saved_logs)
+      
+      return True
+      
+    except Exception as e:
+      connection_manager.broadcast_log(
+        text=f"Ошибка при ручном экспорте логов с устройства {device_name}: {str(e)}",
+        level="error",
+        device_id=device_id,
+        class_name="MyHomeClass",
+        action="manual_logs_export_error",
+        value=str(e)
+      )
+      
+      # Обновляем время попытки экспорта логов (даже при ошибке)
+      self._update_device_logs_export_time(device_id, exported_logs_count=0)
+      
+      return False
+
+  def _update_device_logs_export_time(self, device_id: int, exported_logs_count: int = 0):
+    """
+    Обновляет время последнего экспорта логов в device.params
+    """
+    try:
+      with db_session() as db:
+        device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+        if device:
+          if not device.params:
+            device.params = {}
+          
+          current_time = datetime.now().isoformat()
+          device.params['last_logs_export'] = current_time
+          
+          if exported_logs_count > 0:
+            device.params['last_logs_export_count'] = exported_logs_count
+          
+          db.commit()
+          db.refresh(device)
+          
+          # Отправляем WebSocket уведомление об обновлении
+          self._broadcast_device_update(device_id, device.to_dict())
+          
+          print(f"[MyHomeClass] Updated logs export time for device {device_id}")
+          
+    except Exception as e:
+      print(f"[MyHomeClass] Error updating logs export time for device {device_id}: {e}")
 
   def _run_all(self):
     self._save_logs()
@@ -497,11 +962,55 @@ class MyHomeClass(SingletonClass):
     """
     Загрузка устройств из базы данных
     """
+    # Сначала выполняем миграцию старых log.json файлов
+    self._migrate_all_log_files()
+    
     with db_session() as db:
       devices = db.query(DbDevices).all()
       for device in devices:
         self.add_device(device)
       print('[my home] Загружено устройств:', len(self._devices.keys()))
+
+  def _migrate_all_log_files(self):
+    """
+    Миграция всех старых log.json файлов при старте системы
+    """
+    try:
+      backup_root = "../data/backup"
+      if not os.path.exists(backup_root):
+        return
+      
+      migrated_count = 0
+      
+      # Проходим по всем папкам устройств
+      for item in os.listdir(backup_root):
+        device_path = os.path.join(backup_root, item)
+        if not os.path.isdir(device_path):
+          continue
+        
+        # Проверяем, что это папка с числовым ID устройства
+        try:
+          device_id = int(item)
+        except ValueError:
+          continue
+        
+        old_log_file = os.path.join(device_path, 'log.json')
+        new_log_file = os.path.join(device_path, 'backup.log')
+        
+        # Если есть старый файл и нет нового
+        if os.path.exists(old_log_file) and not os.path.exists(new_log_file):
+          try:
+            # Создаем ConfigVersionManager для миграции
+            config_manager = ConfigVersionManager("", device_id)
+            migrated_count += 1
+          except Exception as e:
+            print(f"[MyHome] Error migrating log.json for device {device_id}: {e}")
+      
+      if migrated_count > 0:
+        print(f"[MyHome] Migrated {migrated_count} log.json files to backup.log format")
+      
+    except Exception as e:
+      print(f"[MyHome] Error during log files migration: {e}")
 
   def get_client(self, device_id: int) -> Optional[MyHomeDeviceClient]:
     """
@@ -524,7 +1033,21 @@ class MyHomeClass(SingletonClass):
     old_client = self._devices.get(device_id)
     if old_client:
       try:
-        asyncio.create_task(old_client.stop())
+        # Проверяем, есть ли активный event loop
+        try:
+          loop = asyncio.get_running_loop()
+          if loop and loop.is_running():
+            asyncio.create_task(old_client.stop())
+          else:
+            # Если нет активного loop, запускаем в новом потоке
+            def stop_client():
+              asyncio.run(old_client.stop())
+            threading.Thread(target=stop_client, daemon=True).start()
+        except RuntimeError:
+          # Если нет event loop, запускаем в новом потоке
+          def stop_client():
+            asyncio.run(old_client.stop())
+          threading.Thread(target=stop_client, daemon=True).start()
       except Exception:
         pass
 
@@ -533,8 +1056,8 @@ class MyHomeClass(SingletonClass):
       device,
       on_initial_ports=self._on_initial_ports,
       on_value=self._on_value,
-      on_connect=lambda dev_id: log_print(f"[my home][{dev_id}] WS connected"),
-      # on_disconnect=lambda dev_id: log_print(f"[my home][{dev_id}] WS disconnected"),
+      on_connect=self._on_connect,
+      on_disconnect=self._on_disconnect,
     )
     self._devices[device_id] = client
 
@@ -549,7 +1072,109 @@ class MyHomeClass(SingletonClass):
     else:
       threading.Thread(target=self._run_client_in_thread, args=(client,), daemon=True).start()
 
+  def _run_client_in_thread(self, client):
+    """
+    Запускает клиент в отдельном потоке с собственным event loop
+    """
+    try:
+      asyncio.run(client.start())
+    except Exception as e:
+      print(f"[MyHomeClass] Error running client in thread: {e}")
+
   # === callbacks ===
+  def _on_connect(self, device_id: int):
+    """
+    Вызывается при подключении устройства
+    """
+    log_print(f"[my home][{device_id}] WS connected")
+    
+    # Обновляем статус в БД
+    try:
+      with db_session() as db:
+        device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+        if device:
+          device.online = True
+          device.last_seen = datetime.now()
+          # Инициализируем поля в params для бэкапов и логов
+          if not device.params:
+            device.params = {}
+          if 'last_backup_time' not in device.params:
+            device.params['last_backup_time'] = None
+          if 'last_backup_check' not in device.params:
+            device.params['last_backup_check'] = None
+          if 'last_logs_export' not in device.params:
+            device.params['last_logs_export'] = None
+          if 'uploaded_files' not in device.params:
+            device.params['uploaded_files'] = []
+          db.commit()
+          
+          # Обновляем объект из БД
+          db.refresh(device)
+          
+          # Отправляем WebSocket уведомление об изменении статуса
+          self._broadcast_device_status_update(device_id, device.to_dict())
+    except Exception as e:
+      print(f"[MyHome] Error updating online status for device {device_id}: {e}")
+
+  def _on_disconnect(self, device_id: int):
+    """
+    Вызывается при отключении устройства
+    """
+    log_print(f"[my home][{device_id}] WS disconnected")
+    
+    # Обновляем статус в БД
+    try:
+      with db_session() as db:
+        device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+        if device:
+          device.online = False
+          device.last_seen = datetime.now()
+          db.commit()
+          
+          # Обновляем объект из БД
+          db.refresh(device)
+          
+          # Отправляем WebSocket уведомление об изменении статуса
+          self._broadcast_device_status_update(device_id, device.to_dict())
+    except Exception as e:
+      print(f"[MyHome] Error updating offline status for device {device_id}: {e}")
+
+  def _broadcast_device_status_update(self, device_id: int, device_data: dict):
+    """
+    Отправляет WebSocket уведомление об изменении статуса устройства
+    """
+    try:
+      from utils.socket_utils import connection_manager
+      import asyncio
+      
+      ws_data = {
+        "type": "device",
+        "action": "status_update",
+        "data": {
+          "device_id": device_id,
+          "device": device_data,
+          "online": device_data.get('online', False),
+          "last_seen": device_data.get('last_seen'),
+          "ts": datetime.now().timestamp()
+        }
+      }
+      
+      # Запускаем broadcast в event loop
+      try:
+        loop = asyncio.get_running_loop()
+        if loop and loop.is_running():
+          asyncio.create_task(connection_manager.broadcast(ws_data))
+        else:
+          loop.run_until_complete(connection_manager.broadcast(ws_data))
+      except RuntimeError:
+        # Если нет активного loop, запускаем в новом потоке
+        def broadcast_update():
+          asyncio.run(connection_manager.broadcast(ws_data))
+        threading.Thread(target=broadcast_update, daemon=True).start()
+      
+    except Exception as e:
+      print(f"Error broadcasting device status update: {e}")
+
   def _on_initial_ports(self, device_id: int, ports: list[dict]):
     """
     Регистрируем/обновляем порты в БД под устройством и синхронизируем runtime-модель.
@@ -593,33 +1218,76 @@ class MyHomeClass(SingletonClass):
     Пришло событие от WS по одному порту: обновим БД и нотифицируем UI/HA.
     event: {code, direction, kind, val, raw}
     """
-    # print(f"[my home] _on_value for device {device_id}: {event}")
-    pass
-    # code = event.get("code")
-    # if not code:
-    #   return
-    # with db_session() as db:
-    #   db_port = (
-    #     db.query(DbPorts)
-    #     .filter(DbPorts.device_id == device_id, DbPorts.code == code)
-    #     .first()
-    #   )
-    #   if db_port:
-    #     db_port.last_value = event.get("val")
-    #     db.commit()
-    #
-    # # пуш в ваш WebSocket/UI
-    # try:
-    #   connection_manager.broadcast_json({
-    #     "topic": "port_update",
-    #     "device_id": device_id,
-    #     "code": code,
-    #     "val": event.get("val"),
-    #     "direction": event.get("direction"),
-    #     "kind": event.get("kind"),
-    #   })
-    # except Exception:
-    #   pass
+    code = event.get("code")
+    if not code:
+      return
+      
+    # Обновляем БД
+    with db_session() as db:
+      # Обновляем порт
+      db_port = (
+        db.query(DbPorts)
+        .filter(DbPorts.device_id == device_id, DbPorts.code == code)
+        .first()
+      )
+      if db_port:
+        db_port.last_value = event.get("val")
+      
+      # Обновляем статус устройства как онлайн при получении любых данных
+      device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+      if device:
+        device.online = True
+        device.last_seen = datetime.now()
+        
+        # Инициализируем поля для отслеживания операций в params, если их нет
+        if not device.params:
+          device.params = {}
+        if 'last_backup_time' not in device.params:
+          device.params['last_backup_time'] = None
+        if 'last_backup_check' not in device.params:
+          device.params['last_backup_check'] = None
+        if 'last_logs_export' not in device.params:
+          device.params['last_logs_export'] = None
+        if 'uploaded_files' not in device.params:
+          device.params['uploaded_files'] = []
+      
+      db.commit()
+      
+      # Обновляем объект из БД
+      db.refresh(device)
+
+    # Пуш в WebSocket/UI
+    try:
+      from utils.socket_utils import connection_manager
+      import asyncio
+      
+      # Используем device_id как pin_id если порт не найден в БД
+      pin_id = db_port.id if db_port else device_id
+      
+      ws_data = {
+        "type": "port",
+        "action": "in",
+        "data": {
+          "pin_id": pin_id,
+          "device_id": device_id,
+          "code": code,
+          "value": event.get("val"),
+          "value_raw": event.get("raw"),
+          "direction": event.get("direction"),
+          "kind": event.get("kind"),
+          "ts": datetime.now().timestamp()
+        }
+      }
+      
+      # Запускаем broadcast в event loop
+      loop = asyncio.get_event_loop()
+      if loop.is_running():
+        asyncio.create_task(connection_manager.broadcast(ws_data))
+      else:
+        loop.run_until_complete(connection_manager.broadcast(ws_data))
+      
+    except Exception as e:
+      print(f"Error broadcasting port update: {e}")
 
 
 def add_routes(app: APIRouter, my_home: MyHomeClass):

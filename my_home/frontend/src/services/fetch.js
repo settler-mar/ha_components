@@ -1,5 +1,31 @@
 import useMessageStore from "@/store/messages";
 
+// Функция для получения правильного API URL в зависимости от контекста
+function getApiUrl(path) {
+  const currentPath = window.location.pathname;
+  let finalUrl;
+  
+  // Если мы в Home Assistant ingress (новый формат), используем полный путь
+  if (currentPath.includes('/api/hassio_ingress/')) {
+    // Убираем trailing slash из currentPath и добавляем path
+    const basePath = currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
+    finalUrl = `${basePath}${path}`;
+    console.log(`[API] Ingress mode (new): ${finalUrl}`);
+  }
+  // Если мы в старом формате ingress
+  else if (currentPath.includes('/hassio/ingress/')) {
+    finalUrl = `/hassio/ingress/local_my_home_devices${path}`;
+    console.log(`[API] Ingress mode (old): ${finalUrl}`);
+  }
+  // Иначе используем обычный путь
+  else {
+    finalUrl = path;
+    console.log(`[API] Direct mode: ${finalUrl}`);
+  }
+  
+  return finalUrl;
+}
+
 function secureFetch(url, {
   method,
   data,
@@ -60,8 +86,10 @@ function secureFetch(url, {
         break;
     }
   }
-  // console.log('secureFetch', url, method, data, dataType, headers, body);
-  return fetch(url, {
+  // Преобразуем URL для ingress если нужно
+  const finalUrl = getApiUrl(url);
+  // console.log('secureFetch', finalUrl, method, data, dataType, headers, body);
+  return fetch(finalUrl, {
     method: method || "GET",
     body,
     mode: "cors",

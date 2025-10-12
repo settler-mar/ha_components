@@ -1,5 +1,5 @@
 name: "MY_HOME-devices"
-version: "0.0.4"
+version: "0.0.5"
 slug: "my_home_devices"
 description: "Custom addon for managing devices in MY_HOME environment"
 #url: "https://github.com/yourname/my_custom_addon"
@@ -37,6 +37,11 @@ hassio_api: true
 homeassistant_api: true
 auth_api: true
 stdin: false
+
+# Настройки для бэкапа - указываем только папки данных
+map:
+  - data
+  - data_src
 
 arch:
   - amd64

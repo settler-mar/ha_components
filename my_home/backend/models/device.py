@@ -207,6 +207,7 @@ class MyHomeDeviceClient:
 
           # 2) WS
           ws = await self._open_ws(session)
+          self._current_ws = ws  # Сохраняем ссылку на WebSocket для отправки команд
           self._online = True
           if self.on_connect:
             self.on_connect(self.device_id)
@@ -242,6 +243,7 @@ class MyHomeDeviceClient:
 
       except Exception as e:
         self._online = False
+        self._current_ws = None  # Очищаем ссылку на WebSocket
         if self.on_disconnect:
           self.on_disconnect(self.device_id)
         print(f'[MyHomeDeviceClient][{self.device_id}] Error in WS loop, reconnecting...')
@@ -249,6 +251,7 @@ class MyHomeDeviceClient:
         await asyncio.sleep(self.reconnect_delay)
       else:
         self._online = False
+        self._current_ws = None  # Очищаем ссылку на WebSocket
         if self.on_disconnect:
           self.on_disconnect(self.device_id)
         print(f'[MyHomeDeviceClient][{self.device_id}] Connection closed, reconnecting...')
@@ -264,6 +267,29 @@ class MyHomeDeviceClient:
       ports = await self._fetch_values(session)
     self.on_initial_ports(self.device_id, ports)
     return ports
+
+  async def send_command(self, code: str, value) -> bool:
+    """
+    Отправляет команду на устройство в формате ESP: "code#value"
+    """
+    try:
+      if not self._online:
+        return False
+      
+      if not hasattr(self, '_current_ws') or not self._current_ws:
+        return False
+      
+      # Формируем команду в формате ESP
+      command = f"{code}#{value}"
+      
+      # Отправляем команду
+      await self._current_ws.send_str(command)
+      
+      return True
+      
+    except Exception as e:
+      print(f"[MyHomeDeviceClient][{self.device_id}] Error sending command: {e}")
+      return False
 
   # ---------- обновление параметров ----------
   async def update_params(self, patch: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,6 +1,31 @@
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 const host = window.location.host;
-const wsUrl = `${protocol}//${host}/ws`;
+// Функция для получения правильного WebSocket URL в зависимости от контекста
+function getWsUrl() {
+  const currentPath = window.location.pathname;
+  let finalUrl;
+  
+  // Если мы в Home Assistant ingress (новый формат), используем полный путь
+  if (currentPath.includes('/api/hassio_ingress/')) {
+    // Убираем trailing slash из currentPath и добавляем /ws
+    const basePath = currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
+    finalUrl = `${protocol}//${host}${basePath}/ws`;
+    console.log(`[WebSocket] Ingress mode (new): ${finalUrl}`);
+  }
+  // Если мы в старом формате ingress
+  else if (currentPath.includes('/hassio/ingress/')) {
+    finalUrl = `${protocol}//${host}/hassio/ingress/local_my_home_devices/ws`;
+    console.log(`[WebSocket] Ingress mode (old): ${finalUrl}`);
+  }
+  // Иначе используем обычный путь
+  else {
+    finalUrl = `${protocol}//${host}/ws`;
+    console.log(`[WebSocket] Direct mode: ${finalUrl}`);
+  }
+  
+  return finalUrl;
+}
+const wsUrl = getWsUrl();
 
 export class WebSocketService {
   constructor(url) {
@@ -9,12 +34,11 @@ export class WebSocketService {
     this.listeners = new Map();
     this.retryCount = 0;
     this.MAX_RETRIES = 5;
-    this.connect();
     this.state = 'disconnected';
+    this.connect();
   }
 
   connect() {
-    console.log('start connect');
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       this.state = 'connecting';
       this.socket = new WebSocket(this.url);
@@ -26,12 +50,22 @@ export class WebSocketService {
       };
 
       this.socket.onmessage = (event) => {
-        // console.log("ws: message:", event.data);
-        const data = JSON.parse(event.data);
-        const eventKey = `${data.type}:${data.action || ''}`;
-        const payload = data.data || data;
-        if (this.listeners.has(eventKey)) {
-          this.listeners.get(eventKey).forEach((callback) => callback(payload));
+        try {
+          const data = JSON.parse(event.data);
+          const eventKey = `${data.type}:${data.action || ''}`;
+          const payload = data.data || data;
+          
+          if (this.listeners.has(eventKey)) {
+            this.listeners.get(eventKey).forEach((callback) => {
+              try {
+                callback(payload);
+              } catch (error) {
+                console.error("Error in WebSocket listener:", error);
+              }
+            });
+          }
+        } catch (error) {
+          console.error("Error parsing WebSocket message:", error);
         }
       };
 
@@ -72,6 +106,17 @@ export class WebSocketService {
       } else {
         this.listeners.delete(eventKey);
       }
+    }
+  }
+
+  send(message) {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(message);
+      console.log('WebSocket message sent:', message);
+      return true;
+    } else {
+      console.warn('WebSocket not connected, cannot send message:', message);
+      return false;
     }
   }
 }

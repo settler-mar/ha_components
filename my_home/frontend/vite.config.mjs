@@ -13,6 +13,7 @@ import {fileURLToPath, URL} from "node:url";
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: './', // Используем относительные пути для работы в HA ingress
   plugins: [
     VueRouter(),
     Layouts(),

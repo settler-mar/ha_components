@@ -59,11 +59,13 @@ export const usePortsStore = defineStore('ports', {
           console.warn(`Corrected ts_delta by ${delta.toFixed(3)}s`);
         }
 
-        this.ports[port_id] = {
+        const new_port_data = {
           value: data.value,
           value_raw: data.value_raw,
           ts: incoming_ts,
         };
+        
+        this.ports[port_id] = new_port_data;
       });
 
       this.isSubscribed = true;

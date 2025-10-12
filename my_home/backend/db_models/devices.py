@@ -20,6 +20,8 @@ class Devices(BaseModelDB):
   vendor = Column(String(100))
   description = Column(String(255))
   type = Column(String(20))
+  online = Column(Boolean, default=False)
+  last_seen = Column(DateTime, nullable=True)
   params = Column(MutableDict.as_mutable(Json))
 
   def on_create(self):

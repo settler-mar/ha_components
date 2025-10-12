@@ -28,9 +28,17 @@ class GoogleConnector:
       self.creds = Credentials.from_authorized_user_file(self.creds_path, SCOPES)
     elif os.path.exists(self.auth_path):
       flow = InstalledAppFlow.from_client_secrets_file(self.auth_path, SCOPES)
-      self.creds = flow.run_local_server(port=0)
-      with open(self.creds_path, 'w') as token:
-        token.write(self.creds.to_json())
+      # Проверяем, есть ли графический интерфейс (не в Docker)
+      try:
+        import webbrowser
+        webbrowser.get()
+        self.creds = flow.run_local_server(port=0)
+        with open(self.creds_path, 'w') as token:
+          token.write(self.creds.to_json())
+      except Exception as e:
+        print(f"[GoogleConnector] Не удалось открыть браузер для авторизации: {e}")
+        print("[GoogleConnector] Работаем в headless режиме - авторизация отключена")
+        return False
     else:
       msg = "[GoogleConnector] Не найдены ни google_service_account.json, ни google_credentials.json"
       if self.strict:

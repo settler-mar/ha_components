@@ -1,4 +1,2 @@
-__pycache__/
-.pytest_cache
-*.db
-*.db.backup
+# Backend-specific ignores
+# (Common Python patterns are in root .gitignore)
