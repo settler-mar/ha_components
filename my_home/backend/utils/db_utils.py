@@ -7,6 +7,7 @@ import pkgutil
 import os
 from fastapi import FastAPI
 from utils.configs import config
+from utils.logger import db_logger as logger
 from sqlalchemy import inspect
 from sqlalchemy.schema import CreateTable
 import re
@@ -293,7 +294,7 @@ def check_structure():
     expected_columns = {(col[0], col[1], get_default_value(col[2], col[1]), col[3], col[4]) for col in expected_columns}
 
     if existing_columns != expected_columns:
-      print(f"\U0001f527 Изменения в структуре таблицы {table_name}")
+      logger.info(f"Database structure changes detected for table {table_name}")
       update_struct_function(table_name, expected_columns, existing_columns, inspector)
 
 
@@ -304,7 +305,7 @@ def init_db(app: FastAPI):
     if file.startswith('__') or file.startswith('.'):
       continue
     if file.endswith('.py'):
-      print(f"Loading DB MODEL from file: {file[:-3]}")
+      logger.info(f"Loading DB MODEL from file: {file[:-3]}")
       importlib.import_module(f"db_models.{file[:-3]}")
 
   Base.metadata.create_all(bind=engine)
@@ -314,4 +315,4 @@ def init_db(app: FastAPI):
     cls.create_routes(app, db_session)
 
   check_structure()
-  print('🔧 Проверка структуры БД завершена')
+  logger.success('Database structure check completed')

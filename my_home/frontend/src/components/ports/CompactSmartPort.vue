@@ -2,13 +2,16 @@
   <!-- Обычная строка таблицы для широких экранов -->
   <tr v-if="!isMobileView" class="compact-smart-port" :class="portClasses">
     <!-- Чекбокс для HA (если в режиме конфигурации) -->
-    <td v-if="showHaCheckbox" style="width: 40px;">
-      <v-checkbox
-        :model-value="port.haPublished"
-        @update:model-value="(value) => $emit('ha-toggle', port, value)"
-        hide-details
-        size="small"
-      ></v-checkbox>
+    <td v-if="showHaCheckbox" style="width: 40px; position: relative;">
+      <div class="checkbox-container" :class="{ 'has-pending-changes': hasPendingChanges }">
+        <v-checkbox
+          :model-value="currentStatus"
+          @update:model-value="(value) => $emit('ha-toggle', port, value)"
+          hide-details
+          density="compact"
+          :color="hasPendingChanges ? 'warning' : undefined"
+        ></v-checkbox>
+      </div>
     </td>
     
     <!-- Название и иконка порта -->
@@ -26,11 +29,12 @@
             
             <!-- HA индикатор -->
             <v-chip
-              v-if="port.haPublished"
+              v-if="port.ha?.ha_published"
               size="x-small"
               color="orange"
               variant="tonal"
               class="ms-2"
+              title="Опубликовано в Home Assistant"
             >
               HA
             </v-chip>
@@ -66,14 +70,16 @@
       <td :colspan="getColspan()" class="mobile-port-title" style="position: relative;">
         <div class="d-flex align-center justify-space-between">
           <div class="d-flex align-center">
-            <v-checkbox
-              v-if="showHaCheckbox"
-              :model-value="port.haPublished"
-              @update:model-value="(value) => $emit('ha-toggle', port, value)"
-              hide-details
-              size="small"
-              class="me-2"
-            ></v-checkbox>
+            <div class="me-2 checkbox-container" :class="{ 'has-pending-changes': hasPendingChanges }">
+              <v-checkbox
+                v-if="showHaCheckbox"
+                :model-value="currentStatus"
+                @update:model-value="(value) => $emit('ha-toggle', port, value)"
+                hide-details
+                density="compact"
+                :color="hasPendingChanges ? 'warning' : undefined"
+              ></v-checkbox>
+            </div>
             
             <v-icon
               :icon="portTypeIcon"
@@ -85,11 +91,12 @@
             
             <!-- HA индикатор -->
             <v-chip
-              v-if="port.haPublished"
+              v-if="port.ha?.ha_published"
               size="x-small"
               color="orange"
               variant="tonal"
               class="ms-2"
+              title="Опубликовано в Home Assistant"
             >
               HA
             </v-chip>
@@ -144,6 +151,14 @@ const props = defineProps({
     default: true
   },
   showUpdateIndicator: {
+    type: Boolean,
+    default: false
+  },
+  currentStatus: {
+    type: Boolean,
+    default: false
+  },
+  hasPendingChanges: {
     type: Boolean,
     default: false
   }
@@ -251,6 +266,8 @@ const portTypeColor = computed(() => {
   return colors[portType.value] || 'grey'
 })
 
+// hasPendingChanges теперь приходит как prop
+
 // Methods
 const handlePortUpdate = (code, value) => {
   emit('update', code, value)
@@ -304,6 +321,32 @@ const handlePortUpdate = (code, value) => {
 .mobile-control-cell {
   padding: 4px 12px 8px 12px !important;
   background-color: rgba(0, 0, 0, 0.01);
+}
+
+/* Стили для эффекта свечения */
+.checkbox-container {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.checkbox-container.has-pending-changes :deep(.v-selection-control__wrapper) {
+  animation: glow-pulse 2s infinite;
+}
+
+.checkbox-container.has-pending-changes :deep(.v-selection-control__input) {
+  animation: glow-pulse 2s infinite;
+}
+
+@keyframes glow-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 193, 7, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+  }
 }
 
 /* Адаптивные стили */

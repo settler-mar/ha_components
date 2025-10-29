@@ -4,7 +4,7 @@ import useMessageStore from "@/store/messages";
 function getApiUrl(path) {
   const currentPath = window.location.pathname;
   let finalUrl;
-  
+
   // Если мы в Home Assistant ingress (новый формат), используем полный путь
   if (currentPath.includes('/api/hassio_ingress/')) {
     // Убираем trailing slash из currentPath и добавляем path
@@ -22,7 +22,7 @@ function getApiUrl(path) {
     finalUrl = path;
     console.log(`[API] Direct mode: ${finalUrl}`);
   }
-  
+
   return finalUrl;
 }
 
@@ -79,7 +79,9 @@ function secureFetch(url, {
         body = new URLSearchParams(data);
         break;
       case 'json':
-        body = JSON.stringify(data);
+        if (typeof data !== 'string') {
+          body = JSON.stringify(data);
+        }
         break;
       default:
         body = data;

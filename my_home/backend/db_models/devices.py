@@ -25,13 +25,11 @@ class Devices(BaseModelDB):
   params = Column(MutableDict.as_mutable(Json))
 
   def on_create(self):
-    from models.my_home import MyHomeClass
-    MyHomeClass().add_device(self.__dict__)
+    # Устройство уже добавлено в MyHomeClass при инициализации
     print("Device created:", self.id, self.name)
 
   def on_update(self):
-    from models.my_home import MyHomeClass
-    MyHomeClass().add_device(self.__dict__)
+    # Обновление устройства обрабатывается отдельно
     print("Device updated:", self.id, self.name)
 
   def on_delete(self):

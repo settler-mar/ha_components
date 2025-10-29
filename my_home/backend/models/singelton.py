@@ -1,4 +1,4 @@
-from utils.logs import log_print
+from utils.logger import api_logger as logger
 
 
 class SingletonClass(object):
@@ -16,7 +16,7 @@ class SingletonClass(object):
       cls.instance = {}
     if cls.__name__ not in cls.instance:
       cls.instance[cls.__name__] = super(SingletonClass, cls).__new__(cls)
-      log_print(f'Creating new instance {cls.__name__} with id {id(cls.instance[cls.__name__])}')
+      logger.debug(f'Creating new instance {cls.__name__} with id {id(cls.instance[cls.__name__])}')
     return cls.instance[cls.__name__]
 
   @classmethod

@@ -7,9 +7,24 @@
         <span v-if="showCode" class="port-code">{{ port.code }}</span>
       </div>
       
-      <!-- Индикатор типа порта -->
-      <div class="port-type-indicator" :title="portTypeDescription">
-        <v-icon :icon="portTypeIcon" size="14"></v-icon>
+      <!-- Индикаторы -->
+      <div class="port-indicators">
+        <!-- HA индикатор -->
+        <v-chip
+          v-if="port.ha?.ha_published"
+          size="x-small"
+          color="orange"
+          variant="tonal"
+          class="me-1"
+          title="Опубликовано в Home Assistant"
+        >
+          HA
+        </v-chip>
+        
+        <!-- Индикатор типа порта -->
+        <div class="port-type-indicator" :title="portTypeDescription">
+          <v-icon :icon="portTypeIcon" size="14"></v-icon>
+        </div>
       </div>
     </div>
     
@@ -206,6 +221,12 @@ const handlePortUpdate = (code, value) => {
   flex-direction: column;
   gap: 2px;
   flex: 1;
+}
+
+.port-indicators {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .port-name {

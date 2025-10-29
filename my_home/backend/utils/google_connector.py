@@ -5,6 +5,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from utils.logger import api_logger as logger
 
 
 # Google Sheets API connector
@@ -36,15 +37,15 @@ class GoogleConnector:
         with open(self.creds_path, 'w') as token:
           token.write(self.creds.to_json())
       except Exception as e:
-        print(f"[GoogleConnector] Не удалось открыть браузер для авторизации: {e}")
-        print("[GoogleConnector] Работаем в headless режиме - авторизация отключена")
+        logger.warning(f"GoogleConnector failed to open browser for authorization: {e}")
+        logger.warning("GoogleConnector working in headless mode - authorization disabled")
         return False
     else:
       msg = "[GoogleConnector] Не найдены ни google_service_account.json, ни google_credentials.json"
       if self.strict:
         raise FileNotFoundError(msg)
       else:
-        print(msg)
+        logger.warning(msg)
         return False
 
     if self.creds and self.creds.expired and self.creds.refresh_token:
@@ -52,13 +53,13 @@ class GoogleConnector:
 
     try:
       self.service = build('sheets', 'v4', credentials=self.creds)
-      print("[GoogleConnector] Авторизация успешна")
+      logger.success("GoogleConnector authorization successful")
       return True
     except Exception as e:
       if self.strict:
         raise RuntimeError(f"[GoogleConnector] Ошибка авторизации: {e}")
       else:
-        print(f"[GoogleConnector] Авторизация не удалась: {e}")
+        logger.error(f"GoogleConnector authorization failed: {e}")
         return False
 
   def gsheet_add_row(
@@ -77,11 +78,11 @@ class GoogleConnector:
       batch_size: int = 500,
   ):
     if not self.enabled:
-      print("[GoogleConnector] Sheets API отключён, данные не записаны.")
+      logger.warning("GoogleConnector Sheets API disabled, data not written")
       return
 
     if not sheet or not page or not data:
-      print("[GoogleConnector] Параметры sheet, page и data обязательны для заполнения.")
+      logger.error("GoogleConnector parameters sheet, page and data are required")
       return
 
     try:
@@ -103,11 +104,11 @@ class GoogleConnector:
             body={"properties": {"title": sheet}}
           ).execute()
           spreadsheet_id = spreadsheet["spreadsheetId"]
-          print(f"[GoogleConnector] Создана новая таблица: {sheet}")
+          logger.info(f"GoogleConnector created new spreadsheet: {sheet}")
         elif files:
           spreadsheet_id = files[0]["id"]
         else:
-          print(f"[GoogleConnector] Таблица '{sheet}' не найдена.")
+          logger.error(f"GoogleConnector spreadsheet '{sheet}' not found")
           return
 
       # 2. Проверяем вкладку
@@ -120,7 +121,7 @@ class GoogleConnector:
           spreadsheetId=spreadsheet_id,
           body={"requests": [{"addSheet": {"properties": {"title": page}}}]}
         ).execute()
-        print(f"[GoogleConnector] Добавлена вкладка: {page}")
+        logger.info(f"GoogleConnector added tab: {page}")
 
         if with_header:
           self.service.spreadsheets().values().append(
@@ -163,10 +164,10 @@ class GoogleConnector:
           existing_rows.add(tuple(row))
 
         inserted += len(chunk)
-        print(f"[GoogleConnector][{page}] Вставлен батч: {len(chunk)} строк")
+        logger.debug(f"GoogleConnector[{page}] inserted batch: {len(chunk)} rows")
 
       if inserted == 0:
-        print(f"[GoogleConnector][{page}] Нет новых строк для вставки.")
+        logger.info(f"GoogleConnector[{page}] No new rows to insert")
 
       # 5. Лимит строк: если max_rows задан
       if max_rows > 0:
@@ -181,7 +182,7 @@ class GoogleConnector:
           sheet_id = next(
             s["properties"]["sheetId"] for s in sheets if s["properties"]["title"] == page
           )
-          print(f"[GoogleConnector] Удаляем {num_to_delete} старых строк из {page}")
+          logger.info(f"GoogleConnector deleting {num_to_delete} old rows from {page}")
           self.service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id,
             body={
@@ -200,8 +201,8 @@ class GoogleConnector:
       return True
 
     except Exception as err:
-      print(f"[GoogleConnector] Ошибка при записи в таблицу: {err}")
-      print(f"[GoogleConnector] Данные не записаны: {data}")
-      print(
-        f"[GoogleConnector] Параметры: sheet={sheet}, page={page}, create_sheet_if_missing={create_sheet_if_missing}, ")
+      logger.error(f"GoogleConnector error writing to spreadsheet: {err}")
+      logger.error(f"GoogleConnector data not written: {data}")
+      logger.error(
+        f"GoogleConnector parameters: sheet={sheet}, page={page}, create_sheet_if_missing={create_sheet_if_missing}")
       return False

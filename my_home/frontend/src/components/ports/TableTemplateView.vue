@@ -3,15 +3,18 @@
     <!-- Заголовок группы -->
     <div v-if="title" class="group-header" @click="toggleCollapse">
       <div class="d-flex align-center">
-        <v-checkbox
-          v-if="showHaCheckboxes"
-          :model-value="groupHaPublished"
-          @update:model-value="toggleGroupHA"
-          hide-details
-          class="me-2"
-          size="small"
-          @click.stop
-        ></v-checkbox>
+        <div class="me-2 checkbox-container" :class="{ 'has-pending-changes': hasGroupPendingChanges }">
+          <v-checkbox
+            v-if="showHaCheckboxes"
+            :model-value="groupHaPublished"
+            :indeterminate="groupHaPublished === null"
+            @update:model-value="toggleGroupHA"
+            hide-details
+            density="compact"
+            :color="hasGroupPendingChanges ? 'warning' : undefined"
+            @click.stop
+          ></v-checkbox>
+        </div>
         
         <v-icon 
           :icon="isCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-down'" 
@@ -42,6 +45,7 @@
           color="orange" 
           variant="outlined" 
           class="ms-1"
+          title="Портов опубликовано в Home Assistant"
         >
           HA: {{ publishedPortsCount }}
         </v-chip>
@@ -82,10 +86,10 @@
                   <v-checkbox
                     v-if="showHaCheckboxes"
                     :model-value="isRowPublished(row)"
-                    @update:model-value="(value) => toggleRowPublishing(row, value)"
+                    @update:model-value="(value) => toggleRowHA(row, value)"
                     hide-details
                     class="me-2"
-                    size="small"
+                    density="compact"
                   ></v-checkbox>
                   <span>{{ getRowTitle(row) }}</span>
                 </div>
@@ -101,7 +105,11 @@
                             :is="getCellComponent(row, col)"
                             :port="getCellPort(row, col)"
                             :value="getCellValue(row, col)"
+                            :show-ha-checkbox="showHaCheckboxes"
+                            :current-status="getPortCurrentStatus(getCellPort(row, col))"
+                            :has-pending-changes="hasPortChanges(getCellPort(row, col)?.code)"
                             @update="handleCellUpdate"
+                            @ha-toggle="handlePortHAToggle"
                             class="table-cell-control"
                           />
                           
@@ -134,6 +142,7 @@ import CompactDigitalPort from './CompactDigitalPort.vue'
 import CompactColorPort from './CompactColorPort.vue'
 import CompactListPort from './CompactListPort.vue'
 import UpdateIndicator from '@/components/UpdateIndicator.vue'
+import { useHAChangesStore } from '@/store/haChangesStore'
 
 const props = defineProps({
   ports: {
@@ -160,6 +169,9 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  device_id: {
+    type: Number
+  },
   showGroupUpdate: {
     type: Boolean,
     default: false
@@ -167,10 +179,21 @@ const props = defineProps({
   updatedPorts: {
     type: Set,
     default: () => new Set()
+  },
+  hasPortPendingChanges: {
+    type: Function,
+    default: () => false
+  },
+  getPortPendingChange: {
+    type: Function,
+    default: () => null
   }
 })
 
-const emit = defineEmits(['update', 'ha-toggle-port', 'ha-toggle-group'])
+const emit = defineEmits(['update'])
+
+// Initialize store
+const haChangesStore = useHAChangesStore()
 
 // Reactive data
 const isCollapsed = ref(props.defaultCollapsed)
@@ -197,11 +220,47 @@ const tableRows = computed(() => {
 })
 
 const groupHaPublished = computed(() => {
-  return props.ports.some(port => port.haPublished)
+  const publishedCount = props.ports.filter(port => getPortCurrentStatus(port)).length
+  const totalCount = props.ports.length
+  
+  if (publishedCount === 0) return false
+  if (publishedCount === totalCount) return true
+  return null // Частично выделено
 })
 
+// Функция для расчета текущего статуса порта (база + изменение из store)
+const getPortCurrentStatus = (port) => {
+  // В режиме HA используем реальный статус из HA данных
+  if (props.showHaCheckboxes) {
+    const haStatus = port.ha?.ha_published || false
+    const storeAction = haChangesStore.getPortAction(props.device_id, port.code)
+
+    if (storeAction === 'add') return true
+    if (storeAction === 'remove') return false
+    return haStatus
+  }
+  
+  // В обычном режиме используем старую логику
+  const baseStatus = !!port.published
+  const storeAction = haChangesStore.getPortAction(props.device_id, port.code)
+  
+  if (storeAction === 'add') return true
+  if (storeAction === 'remove') return false
+  return baseStatus
+}
+
+// Функция для проверки, есть ли изменения для порта
+const hasPortChanges = (portCode) => {
+  return haChangesStore.hasPortChanges(props.device_id, portCode)
+}
+
 const publishedPortsCount = computed(() => {
-  return props.ports.filter(port => port.haPublished).length
+  return props.ports.filter(port => port.ha?.ha_published).length
+})
+
+const hasGroupPendingChanges = computed(() => {
+  // Группа светится, если в ней есть хотя бы одно изменение
+  return props.ports.some(port => hasPortChanges(port.code))
 })
 
 // Methods
@@ -209,6 +268,39 @@ const toggleCollapse = () => {
   if (props.collapsible) {
     isCollapsed.value = !isCollapsed.value
   }
+}
+
+const handlePortHAToggle = (port, value) => {
+  // В режиме HA используем реальный статус из HA данных как базовый
+  const baseStatus = props.showHaCheckboxes ? (port.ha?.ha_published || false) : !!port.published
+  let action
+  if (value === baseStatus) {
+    action = null
+  } else {
+    action = value ? 'add' : 'remove'
+  }
+  haChangesStore.updateChange(props.device_id, port.code, action)
+  updateGroupState()
+}
+
+const toggleGroupHA = (value) => {
+  let newValue = value === null ? true : value
+  props.ports.forEach(port => {
+    // В режиме HA используем реальный статус из HA данных как базовый
+    const baseStatus = props.showHaCheckboxes ? (port.ha?.ha_published || false) : !!port.published
+    let action
+    if (newValue === baseStatus) {
+      action = null
+    } else {
+      action = newValue ? 'add' : 'remove'
+    }
+    haChangesStore.updateChange(props.device_id, port.code, action)
+  })
+  updateGroupState()
+}
+
+const updateGroupState = () => {
+  // Empty function to trigger reactivity
 }
 
 const getCellPort = (row, col) => {
@@ -262,20 +354,26 @@ const getColumnOnlineStatus = (col) => {
 
 const isRowPublished = (row) => {
   const rowPorts = props.ports.filter(port => port.row === row)
-  return rowPorts.some(port => port.haPublished)
+  return rowPorts.some(port => getPortCurrentStatus(port))
 }
 
-const toggleRowPublishing = (row, value) => {
+const toggleRowHA = (row, value) => {
   const rowPorts = props.ports.filter(port => port.row === row)
   rowPorts.forEach(port => {
-    port.haPublished = value
-    emit('ha-toggle-port', port, value)
+    // В режиме HA используем реальный статус из HA данных как базовый
+    const baseStatus = props.showHaCheckboxes ? (port.ha?.ha_published || false) : !!port.published
+    let action
+    if (value === baseStatus) {
+      action = null
+    } else {
+      action = value ? 'add' : 'remove'
+    }
+    haChangesStore.updateChange(props.device_id, port.code, action)
   })
+  updateGroupState()
 }
 
-const toggleGroupHA = (value) => {
-  emit('ha-toggle-group', props.ports, value)
-}
+// Старые функции удалены, используются новые handlePortHAToggle и toggleGroupHA
 
 const isCellUpdated = (row, col) => {
   const port = getCellPort(row, col)
@@ -421,6 +519,32 @@ const getColumnTooltip = (col) => {
   
   .table-cell-control {
     max-width: 80px;
+  }
+}
+
+/* Стили для эффекта свечения */
+.checkbox-container {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.checkbox-container.has-pending-changes :deep(.v-selection-control__wrapper) {
+  animation: glow-pulse 2s infinite;
+}
+
+.checkbox-container.has-pending-changes :deep(.v-selection-control__input) {
+  animation: glow-pulse 2s infinite;
+}
+
+@keyframes glow-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 193, 7, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
   }
 }
 </style>

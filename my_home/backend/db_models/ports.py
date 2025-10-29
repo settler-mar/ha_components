@@ -10,6 +10,7 @@ from sqlalchemy.ext.mutable import MutableDict
 from db_models.common.json import Json
 from db_models.common.list import List
 from sqlalchemy.ext.declarative import declared_attr
+from sqlalchemy.ext.mutable import MutableDict
 
 
 class Ports(BaseModelDB):
@@ -26,6 +27,7 @@ class Ports(BaseModelDB):
   unit = Column(String(20))
   groups_name = Column(String(100))
   values_variant = Column(List)
+  params = Column(MutableDict.as_mutable(Json))
 
   @declared_attr
   def device_id(cls):

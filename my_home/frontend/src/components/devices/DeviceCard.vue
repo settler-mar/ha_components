@@ -3,11 +3,11 @@
     <v-toolbar density="compact" :elevation="1" border>
       📟 {{ device.name }}
       <v-chip density="comfortable" size="x-small" color="info">id: {{ device.id }}</v-chip>
-      
+
       <!-- Индикация обновления устройства -->
       <div class="update-indicator-wrapper device-update-wrapper">
-        <UpdateIndicator 
-          :show="deviceUpdated" 
+        <UpdateIndicator
+          :show="deviceUpdated"
           :duration="1000"
           title="Данные обновлены"
           class="device-update"
@@ -28,18 +28,27 @@
         color="error"
       >offline
       </v-chip>
-      
+
       <!-- Индикация Home Assistant -->
-              <v-chip
-                v-if="haIntegrationEnabled"
-                density="comfortable"
-                size="x-small"
-                color="grey"
-                variant="outlined"
-              >
-                <v-icon size="12" class="me-1">mdi-home-assistant</v-icon>
-                HA
-              </v-chip>
+      <v-chip
+        v-if="haIntegrationEnabled"
+        density="comfortable"
+        size="x-small"
+        :color="hasPendingHAChanges ? 'warning' : 'grey'"
+        :variant="hasPendingHAChanges ? 'tonal' : 'outlined'"
+      >
+        <v-icon size="12" class="me-1">mdi-home-assistant</v-icon>
+        HA
+      </v-chip>
+      <v-badge
+        v-if="hasPendingHAChanges"
+        location="top right"
+        :content="haChangesStore.getDeviceChangesCount(props.device.id)"
+        color="primary"
+        overlap
+        class="ms-1 badge-number"
+      >
+      </v-badge>
 
       <ActionHandler
         :actions="actions"
@@ -64,7 +73,7 @@
               <v-icon size="12">mdi-play</v-icon>
             </v-btn>
           </div>
-          
+
           <!-- Статус логов (если есть модуль логов) -->
           <div v-if="hasLogsModule" class="d-flex align-center me-4">
             <v-icon size="14" class="me-1" :color="logsStatusColor">mdi-file-document</v-icon>
@@ -74,7 +83,7 @@
             </v-btn>
           </div>
         </div>
-        
+
         <!-- Кнопка деталей -->
         <v-btn size="small" variant="outlined" @click="showDetailsModal = true">
           <v-icon size="14" class="me-1">mdi-information</v-icon>
@@ -110,9 +119,9 @@
         <v-col cols="12">
           {{ device.description }}
         </v-col>
-        </v-row>
- 
-        <!-- Система отображения портов -->
+      </v-row>
+
+      <!-- Система отображения портов -->
       <div>
         <!-- Обработка разных типов групп -->
         <template v-for="group in processedGroups" :key="group.title">
@@ -125,28 +134,27 @@
             :show-group-update="updatedGroups.has(group.title)"
             class="mb-2"
           />
-          
+
           <!-- Табличный шаблон -->
           <TableTemplateView
             v-else-if="group.tpl === 'table'"
             :title="group.title"
             :ports="group.items"
+            :device_id="device.id"
             :group-icon="getGroupIcon(group)"
             :collapsible="true"
             :show-ha-checkboxes="haConfigMode && haIntegrationEnabled"
             :show-group-update="updatedGroups.has(group.title)"
             :updated-ports="updatedPorts"
             @update="handlePortUpdate"
-            @ha-toggle-port="togglePortPublishing"
-            @ha-toggle-group="(ports, value) => toggleGroupPublishing({...group, items: ports}, value)"
             class="mb-2"
           />
-          
           <!-- Обычные порты -->
           <PortsTable
             v-else
             :title="group.title"
             :ports="group.items"
+            :device_id="device.id"
             :group-icon="getGroupIcon(group)"
             :collapsible="true"
             :show-ha-checkboxes="haConfigMode && haIntegrationEnabled"
@@ -154,15 +162,11 @@
             :show-group-update="updatedGroups.has(group.title)"
             :updated-ports="updatedPorts"
             @update="handlePortUpdate"
-            @ha-toggle-port="togglePortPublishing"
-            @ha-toggle-group="(ports, value) => toggleGroupPublishing({...group, items: ports}, value)"
             class="mb-2"
           />
         </template>
       </div>
     </v-card-text>
-
-
 
 
     <!-- Диалог управления options/config -->
@@ -231,7 +235,7 @@
     </v-dialog>
 
     <!-- Унифицированная модалка деталей -->
-    <DeviceDetailsModal 
+    <DeviceDetailsModal
       v-model:show-modal="showDetailsModal"
       :device-id="props.device.id"
       :device-name="device.name"
@@ -277,11 +281,11 @@
           <v-icon class="me-2">mdi-file-document</v-icon>
           {{ selectedLogFile?.name }}
         </v-card-title>
-        
+
         <v-card-text style="max-height: 500px;">
           <pre class="log-content">{{ logFileContent }}</pre>
         </v-card-text>
-        
+
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn @click="showLogViewModal = false">Закрыть</v-btn>
@@ -297,7 +301,7 @@
       location="top right"
     >
       {{ snackbarText }}
-      
+
       <template v-slot:actions>
         <v-btn
           variant="text"
@@ -317,6 +321,7 @@ import ActionHandler from '@/components/devices/ActionHandler.vue'
 import {useTableStore} from '@/store/tables'
 import MyFormField from '@/components/form_elements/MyFormField.vue'
 import {usePortsStore} from '@/store/portsStore'
+import {useHAChangesStore} from '@/store/haChangesStore'
 import {secureFetch} from '@/services/fetch'
 import {webSocketService} from '@/services/websocket'
 import UpdateIndicator from '@/components/UpdateIndicator.vue'
@@ -344,6 +349,7 @@ const emit = defineEmits(['edit', 'device-updated'])
 
 const tableStore = useTableStore()
 const portsStore = usePortsStore()
+const haChangesStore = useHAChangesStore()
 
 const port_metadata = computed(() => {
   const metadata = {}
@@ -391,7 +397,17 @@ const hasLogsModule = computed(() => {
 
 // Объединенные данные устройства (приоритет локальным данным)
 const currentDeviceData = computed(() => {
-  return Object.keys(localDeviceData.value).length > 0 ? localDeviceData.value : props.device
+  const baseData = Object.keys(localDeviceData.value).length > 0 ? localDeviceData.value : props.device
+  
+  // Добавляем HA статус из haStatus (реактивно)
+  const haSettings = {
+    publishedPorts: Object.keys(haStatus.value).filter(portCode => haStatus.value[portCode]?.ha_published)
+  }
+  
+  return {
+    ...baseData,
+    haSettings
+  }
 })
 
 // Плоский список всех портов из processedGroups
@@ -414,11 +430,11 @@ const flattenedPorts = computed(() => {
 const backupStatusColor = computed(() => {
   const lastBackup = currentDeviceData.value?.params?.last_backup_time
   if (!lastBackup) return 'grey'
-  
+
   const backupDate = new Date(lastBackup)
   const now = new Date()
   const hoursDiff = (now - backupDate) / (1000 * 60 * 60)
-  
+
   if (hoursDiff < 24) return 'success'
   if (hoursDiff < 72) return 'warning'
   return 'error'
@@ -427,11 +443,11 @@ const backupStatusColor = computed(() => {
 const backupStatusText = computed(() => {
   const lastBackup = currentDeviceData.value?.params?.last_backup_time
   if (!lastBackup) return 'Нет бэкапов'
-  
+
   const backupDate = new Date(lastBackup)
   const now = new Date()
   const hoursDiff = (now - backupDate) / (1000 * 60 * 60)
-  
+
   if (hoursDiff < 1) return 'Недавно'
   if (hoursDiff < 24) return `${Math.floor(hoursDiff)}ч назад`
   if (hoursDiff < 72) return `${Math.floor(hoursDiff / 24)}д назад`
@@ -442,11 +458,11 @@ const backupStatusText = computed(() => {
 const logsStatusColor = computed(() => {
   const lastExport = currentDeviceData.value?.params?.last_logs_export
   if (!lastExport) return 'grey'
-  
+
   const exportDate = new Date(lastExport)
   const now = new Date()
   const hoursDiff = (now - exportDate) / (1000 * 60 * 60)
-  
+
   if (hoursDiff < 24) return 'success'
   if (hoursDiff < 72) return 'warning'
   return 'error'
@@ -455,11 +471,11 @@ const logsStatusColor = computed(() => {
 const logsStatusText = computed(() => {
   const lastExport = currentDeviceData.value?.params?.last_logs_export
   if (!lastExport) return 'Нет экспорта'
-  
+
   const exportDate = new Date(lastExport)
   const now = new Date()
   const hoursDiff = (now - exportDate) / (1000 * 60 * 60)
-  
+
   if (hoursDiff < 1) return 'Недавно'
   if (hoursDiff < 24) return `${Math.floor(hoursDiff)}ч назад`
   if (hoursDiff < 72) return `${Math.floor(hoursDiff / 24)}д назад`
@@ -469,11 +485,27 @@ const logsStatusText = computed(() => {
 // Данные устройства из API
 const deviceData = ref([])
 const haIntegrationEnabled = ref(false)
+const haStatus = ref({}) // Добавляем переменную для хранения HA статуса
 
 // Состояние для индикации обновлений
 const updatedPorts = ref(new Set())
 const updatedGroups = ref(new Set())
 const deviceUpdated = ref(false)
+
+// Функция для проверки статуса публикации порта в HA
+const isPortPublishedToHA = (portCode) => {
+  return haStatus.value[portCode]?.ha_published || false
+}
+
+// Функция для получения entity_id порта
+const getPortEntityId = (portCode) => {
+  return haStatus.value[portCode]?.entity_id || ''
+}
+
+// Функция для получения friendly_name порта
+const getPortFriendlyName = (portCode) => {
+  return haStatus.value[portCode]?.friendly_name || ''
+}
 
 // Computed property для проверки наличия информации о бэкапах
 
@@ -482,7 +514,31 @@ const loadDeviceData = async () => {
   try {
     const response = await secureFetch(`/api/live/${props.device.params?.ip}/get_value`)
     const data = await response.json()
-    deviceData.value = data || []
+    
+    // Обрабатываем новую структуру данных с ha_status
+    if (data && typeof data === 'object') {
+      if (Array.isArray(data)) {
+        // Старая структура - массив
+        deviceData.value = data
+      } else if (data.ports && Array.isArray(data.ports)) {
+        // Новая структура - объект с полем ports
+        deviceData.value = data.ports
+        // Сохраняем информацию о HA статусе для использования в компоненте
+        if (data.ha_status) {
+          haStatus.value = data.ha_status
+          console.log('HA Status:', data.ha_status)
+        }
+      } else {
+        // Другие структуры - преобразуем в массив
+        deviceData.value = Object.keys(data).map(key => ({
+          code: key,
+          val: data[key],
+          type: 'unknown'
+        }))
+      }
+    } else {
+      deviceData.value = []
+    }
   } catch (error) {
     console.warn('Failed to load device data:', error)
     deviceData.value = []
@@ -496,7 +552,7 @@ const loadHASettings = async () => {
     // Получаем настройки из params устройства
     const haSettings = props.device.params?.ha_integration || {}
     haIntegrationEnabled.value = haSettings.enabled ?? true
-    
+
     // Применяем настройки к группам после их создания
     setTimeout(() => {
       applyHASettingsToGroups(haSettings)
@@ -511,11 +567,11 @@ const loadHASettings = async () => {
 function applyHASettingsToGroups(haSettings) {
   const publishedPorts = haSettings.publishedPorts || []
   const publishedGroups = haSettings.publishedGroups || []
-  
+
   processedGroups.value.forEach(group => {
     // Проверяем, опубликована ли вся группа
     group.haPublished = publishedGroups.includes(group.title)
-    
+
     // Применяем настройки к портам
     group.items.forEach(item => {
       item.haPublished = group.haPublished || publishedPorts.includes(item.code)
@@ -545,7 +601,7 @@ const expandedGroups = ref(new Set())
 // Обработка данных из API для группировки
 const processedGroups = computed(() => {
   const groups = {}
-  
+
   deviceData.value.forEach(item => {
     if (item.data && Array.isArray(item.data)) {
       // Это группа с подгруппами
@@ -554,7 +610,7 @@ const processedGroups = computed(() => {
         title: groupKey,
         items: item.data.map(port => ({
           ...port,
-          haPublished: false
+          haPublished: port.ha?.ha_published || false
         })),
         hasSubgroups: true,
         tpl: item.tpl || 'default',
@@ -589,12 +645,27 @@ const processedGroups = computed(() => {
       }
       groups[groupKey].items.push({
         ...item,
-        haPublished: false
+        haPublished: item.ha?.ha_published || false
       })
     }
   })
-  
-  return Object.values(groups)
+
+  // Правильно инициализируем состояние групп
+  const result = Object.values(groups)
+  result.forEach(group => {
+    const publishedCount = group.items.filter(item => item.haPublished).length
+    const totalCount = group.items.length
+
+    if (publishedCount === 0) {
+      group.haPublished = false
+    } else if (publishedCount === totalCount) {
+      group.haPublished = true
+    } else {
+      group.haPublished = null // Частично выделено
+    }
+  })
+
+  return result
 })
 
 // Функции для управления сворачиванием
@@ -737,8 +808,6 @@ function getGroupIcon(group) {
 }
 
 
-
-
 function getPublishedPortsCount(group) {
   if (group.haPublished) {
     return group.items.length
@@ -746,36 +815,14 @@ function getPublishedPortsCount(group) {
   return group.items.filter(item => item.haPublished).length
 }
 
-// Функции для работы с HA публикацией
-function togglePortPublishing(item) {
-  // При изменении порта проверяем состояние группы
-  const group = processedGroups.value.find(g => g.items.includes(item))
-  if (group) {
-    const publishedCount = group.items.filter(i => i.haPublished).length
-    if (publishedCount === 0) {
-      group.haPublished = false
-    } else if (publishedCount === group.items.length) {
-      group.haPublished = true
-    }
-  }
-  saveHASettings()
-}
-
-function toggleGroupPublishing(group) {
-  // Если группа включена, включаем все порты
-  // Если выключена, выключаем все порты
-  group.items.forEach(item => {
-    item.haPublished = group.haPublished
-  })
-  saveHASettings()
-}
+// Функции для работы с HA публикацией перенесены в PortsTable.vue
 
 
 async function saveHASettings() {
   try {
     const publishedPorts = []
     const publishedGroups = []
-    
+
     processedGroups.value.forEach(group => {
       if (group.haPublished) {
         publishedGroups.push(group.title)
@@ -787,18 +834,22 @@ async function saveHASettings() {
         })
       }
     })
-    
+
+    const requestBody = {
+      settings: {
+        publishedPorts,
+        publishedGroups
+      }
+    }
+
+    console.log('[DeviceCard] Sending HA settings:', requestBody)
+
     const response = await secureFetch(`/api/devices/${props.device.id}/ha-settings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        settings: {
-          publishedPorts,
-          publishedGroups
-        }
-      })
+      headers: {'Content-Type': 'application/json'},
+      body: requestBody
     })
-    
+
     if (response.ok) {
       console.log('HA settings saved successfully')
     } else {
@@ -844,7 +895,7 @@ function subscribeToPortUpdates() {
     if (!data || typeof data !== 'object') {
       return;
     }
-    
+
     // Проверяем, относится ли обновление к этому устройству
     if (data.device_id === props.device.id) {
       // Находим порт в processedGroups по коду
@@ -856,7 +907,7 @@ function subscribeToPortUpdates() {
           portItem.value = data.value;
           portItem.value_raw = data.value_raw;
           portItem.ts = data.ts;
-          
+
           showPortUpdate(portItem.code)
           showGroupUpdate(group.title)
           showDeviceUpdate()
@@ -875,12 +926,12 @@ function subscribeToDeviceUpdates() {
       localDeviceData.value = data.device
       // Эмитим событие для обновления родительского компонента
       emit('device-updated', data.device)
-      
+
       // Показываем индикацию обновления устройства
       showDeviceUpdate()
     }
   })
-  
+
   // Подписываемся на обновления статуса устройств
   webSocketService.onMessage('device', 'status_update', (data) => {
     if (data?.device_id === props.device.id) {
@@ -888,7 +939,7 @@ function subscribeToDeviceUpdates() {
       localDeviceData.value = data.device
       // Эмитим событие для обновления родительского компонента
       emit('device-updated', data.device)
-      
+
       // Показываем индикацию обновления устройства
       showDeviceUpdate()
     }
@@ -896,6 +947,8 @@ function subscribeToDeviceUpdates() {
 }
 
 // Методы для работы с HA публикацией уже определены выше в коде
+
+// Функции для работы с индикацией изменений HA перенесены в PortsTable.vue
 
 // Методы для работы с новым интерфейсом портов
 const getGroupViewMode = (group) => {
@@ -918,9 +971,9 @@ const handlePortUpdate = (code, value) => {
       code: code,
       value: value
     }
-    
+
     webSocketService.send(JSON.stringify(command))
-    
+
   } catch (error) {
     console.error('Error sending command via WebSocket:', error)
   }
@@ -1130,11 +1183,11 @@ const formatTimestamp = (timestamp) => {
       // Другие форматы
       date = new Date(timestamp)
     }
-    
+
     if (isNaN(date.getTime())) {
       return timestamp // Возвращаем как есть, если не удалось распарсить
     }
-    
+
     // Форматируем в читаемый вид
     return date.toLocaleString('ru-RU', {
       year: 'numeric',
@@ -1179,7 +1232,7 @@ const viewBackupLog = async () => {
     if (response.ok) {
       const result = await response.json()
       if (result.success) {
-        selectedLogFile.value = { name: 'backup.log' }
+        selectedLogFile.value = {name: 'backup.log'}
         logFileContent.value = result.content
         showLogViewModal.value = true
       } else {
@@ -1247,7 +1300,7 @@ const viewConfigFile = async (filename, timestamp) => {
     if (response.ok) {
       const data = await response.json()
       if (data.success) {
-        selectedLogFile.value = { name: `${filename} (${formatTimestamp(timestamp)})` }
+        selectedLogFile.value = {name: `${filename} (${formatTimestamp(timestamp)})`}
         logFileContent.value = data.content
         showLogViewModal.value = true
       } else {
@@ -1295,7 +1348,7 @@ const handleUpdatePortParam = async (data) => {
       },
       body: JSON.stringify(data.updates)
     })
-    
+
     if (response.ok) {
       showNotification('Параметры порта обновлены', 'success')
     } else {
@@ -1316,7 +1369,7 @@ const handleUpdateHASettings = async (settings) => {
       },
       body: JSON.stringify(settings)
     })
-    
+
     if (response.ok) {
       showNotification('Настройки HA обновлены', 'success')
     } else {
@@ -1337,7 +1390,7 @@ const handleUpdateFavoritePorts = async (favoritePorts) => {
       },
       body: JSON.stringify(favoritePorts)
     })
-    
+
     if (response.ok) {
       showNotification('Избранные порты обновлены', 'success')
     } else {
@@ -1557,33 +1610,32 @@ const handleUpdateLogsConfig = async (config) => {
 }
 
 
-
 /* Адаптивные стили для мобильных устройств */
 @media (max-width: 600px) {
   .device-card {
     max-height: 500px;
   }
-  
+
   .device-content {
     max-height: 400px;
   }
-  
+
   .group-header {
     padding: 6px 8px;
     font-size: 0.9rem;
   }
-  
+
   .group-content {
     margin-left: 8px;
     padding-left: 8px;
   }
-  
+
   .table-view .group-table th,
   .table-view .group-table td {
     padding: 4px 6px;
     font-size: 0.8rem;
   }
-  
+
   .port-row td {
     padding: 4px 6px;
     font-size: 0.8rem;
@@ -1594,16 +1646,16 @@ const handleUpdateLogsConfig = async (config) => {
   .device-card {
     max-height: 400px;
   }
-  
+
   .device-content {
     max-height: 300px;
   }
-  
+
   .group-header {
     padding: 4px 6px;
     font-size: 0.85rem;
   }
-  
+
   .table-view .group-table th,
   .table-view .group-table td {
     padding: 2px 4px;
@@ -1621,6 +1673,10 @@ const handleUpdateLogsConfig = async (config) => {
   padding-top: 16px;
 }
 
+.badge-number{
+  margin: -25px 0 0 4px;
+}
+
 /* Адаптивные стили для устройств */
 @media (max-width: 1400px) {
   .device-card {
@@ -1633,11 +1689,11 @@ const handleUpdateLogsConfig = async (config) => {
     min-width: 100%;
     max-height: none; /* Убираем ограничение высоты на мобильных */
   }
-  
+
   .device-content {
     max-height: none;
   }
-  
+
   /* Новая система портов на мобильных */
   .new-ports-section .v-card-text {
     padding: 8px 16px;

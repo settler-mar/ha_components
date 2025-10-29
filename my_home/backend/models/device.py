@@ -10,6 +10,7 @@ from utils.db_utils import db_session
 from db_models.devices import Devices as DbDevices
 from db_models.ports import Ports as DbPorts
 from utils.logs import log_print
+from utils.logger import device_logger as logger
 from datetime import datetime
 
 _ROUTES_ADDED = False
@@ -74,8 +75,21 @@ class MyHomeDeviceClient:
     self._ports: List[Dict[str, Any]] = []
     self._ports_index: Dict[str, Dict[str, Any]] = {}
     self._ports_lock = asyncio.Lock()
+    self._ports_initialized = False  # Флаг для отслеживания инициализации портов
 
   # ---------- фабрика ----------
+  @classmethod
+  def is_ip_already_used(cls, ip: str, existing_devices: dict) -> bool:
+    """
+    Проверяет, используется ли IP адрес уже другим устройством
+    """
+    if not ip:
+      return False
+    for device_id, client in existing_devices.items():
+      if hasattr(client, 'ip') and client.ip == ip:
+        return True
+    return False
+
   @classmethod
   def from_db_device(
       cls,
@@ -88,6 +102,10 @@ class MyHomeDeviceClient:
   ) -> "MyHomeDeviceClient":
     if isinstance(device, dict):
       # если передали словарь, то создаём объект DbDevices
+      params = device.get("params", {})
+      # Проверяем, что params - это словарь
+      if not isinstance(params, dict):
+        params = {}
       return cls(
         device_id=device.get("id"),
         code=device.get("code", ""),
@@ -96,7 +114,7 @@ class MyHomeDeviceClient:
         vendor=device.get("vendor", ""),
         type_=device.get("type", ""),
         description=device.get("description", ""),
-        params=device.get("params", {}),
+        params=params,
         on_initial_ports=on_initial_ports,
         on_value=on_value,
         on_connect=on_connect,
@@ -110,7 +128,7 @@ class MyHomeDeviceClient:
       vendor=device.vendor,
       type_=device.type,
       description=device.description or "",
-      params=device.params or {},
+      params=device.params if isinstance(device.params, dict) else {},
       on_initial_ports=on_initial_ports,
       on_value=on_value,
       on_connect=on_connect,
@@ -144,6 +162,7 @@ class MyHomeDeviceClient:
     self._stop.set()
     if self._task:
       await asyncio.wait([self._task], timeout=2)
+    self._ports_initialized = False  # Сбрасываем флаг при остановке
 
   # ---------- HTTP bootstrap ----------
   async def _fetch_values(self, session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
@@ -171,7 +190,7 @@ class MyHomeDeviceClient:
     if not self.ip:
       raise RuntimeError(f"Device {self.device_id}: IP is not set in params")
     url = f"ws://{self.ip}:{self.ws_port}/"
-    print(f'[MyHomeDeviceClient][{self.device_id}] Connecting to WS:', url)
+    logger.info(f"Device {self.device_id} connecting to WebSocket: {url}")
     return await session.ws_connect(url, autoping=True, heartbeat=self.ping_interval)
 
   @staticmethod
@@ -203,7 +222,10 @@ class MyHomeDeviceClient:
         async with aiohttp.ClientSession() as session:
           # 1) bootstrap
           ports = await self._fetch_values(session)
-          self.on_initial_ports(self.device_id, ports)
+          # Вызываем on_initial_ports только если порты еще не были инициализированы
+          if not self._ports_initialized:
+            self.on_initial_ports(self.device_id, ports)
+            self._ports_initialized = True
 
           # 2) WS
           ws = await self._open_ws(session)
@@ -246,15 +268,14 @@ class MyHomeDeviceClient:
         self._current_ws = None  # Очищаем ссылку на WebSocket
         if self.on_disconnect:
           self.on_disconnect(self.device_id)
-        print(f'[MyHomeDeviceClient][{self.device_id}] Error in WS loop, reconnecting...')
-        print(f'Exception: {str(e)}')
+        logger.error(f"Device {self.device_id} WebSocket error, reconnecting: {str(e)}")
         await asyncio.sleep(self.reconnect_delay)
       else:
         self._online = False
         self._current_ws = None  # Очищаем ссылку на WebSocket
         if self.on_disconnect:
           self.on_disconnect(self.device_id)
-        print(f'[MyHomeDeviceClient][{self.device_id}] Connection closed, reconnecting...')
+        logger.warning(f"Device {self.device_id} WebSocket connection closed, reconnecting...")
         await asyncio.sleep(self.reconnect_delay)
 
   # ---------- публичные методы данных ----------
@@ -265,7 +286,10 @@ class MyHomeDeviceClient:
   async def refresh_ports_http(self) -> List[Dict[str, Any]]:
     async with aiohttp.ClientSession() as session:
       ports = await self._fetch_values(session)
-    self.on_initial_ports(self.device_id, ports)
+    # Обновляем кэш портов без вызова on_initial_ports
+    async with self._ports_lock:
+      self._ports = ports
+      self._ports_index = {p["code"]: p for p in ports}
     return ports
 
   async def send_command(self, code: str, value) -> bool:
@@ -275,20 +299,21 @@ class MyHomeDeviceClient:
     try:
       if not self._online:
         return False
-      
+
       if not hasattr(self, '_current_ws') or not self._current_ws:
         return False
-      
+
       # Формируем команду в формате ESP
       command = f"{code}#{value}"
-      
+      print('>>>>', command)
+
       # Отправляем команду
       await self._current_ws.send_str(command)
-      
+
       return True
-      
+
     except Exception as e:
-      print(f"[MyHomeDeviceClient][{self.device_id}] Error sending command: {e}")
+      logger.error(f"Device {self.device_id} error sending command: {e}")
       return False
 
   # ---------- обновление параметров ----------
@@ -358,19 +383,32 @@ def add_myhome_device_routes(
     client = resolver(device_id)
     if not client:
       return JSONResponse({"error": "device not found"}, 404)
+
+    # Загружаем порты из базы данных
+    db_ports = await get_ports_from_db(device_id)
+
     if refresh:
       try:
         ports = await client.refresh_ports_http()
+        # Объединяем с данными из БД
+        ports = merge_ports_with_db_data(ports, db_ports)
       except Exception as e:
-        return JSONResponse({"error": str(e)}, 422)
+        # Если устройство недоступно, используем данные из БД
+        ports = db_ports
     else:
       ports = await client.get_ports_cached()
       if not ports:
         try:
           ports = await client.refresh_ports_http()
+          # Объединяем с данными из БД
+          ports = merge_ports_with_db_data(ports, db_ports)
         except Exception:
-          # оставим пусто, если девайс сейчас недоступен
-          ports = []
+          # оставим данные из БД, если девайс сейчас недоступен
+          ports = db_ports
+      else:
+        # Объединяем с данными из БД
+        ports = merge_ports_with_db_data(ports, db_ports)
+
     return {"device": client.meta, "ports": ports}
 
   @app.post("/api/myhome/device/{device_id}/params", tags=['devices'])
@@ -383,3 +421,103 @@ def add_myhome_device_routes(
     except Exception as e:
       return JSONResponse({"error": str(e)}, 422)
     return meta
+
+
+async def get_ports_from_db(device_id: int) -> List[Dict[str, Any]]:
+  """
+  Загружает порты из базы данных
+  """
+  try:
+    from utils.configs import config
+
+    with db_session() as db:
+      db_ports = db.query(DbPorts).filter(DbPorts.device_id == device_id).all()
+
+      # Извлекаем данные из объектов SQLAlchemy внутри контекста сессии
+      port_data_list = []
+      for port in db_ports:
+        port_data = {
+          'code': port.code,
+          'name': port.name,
+          'label': port.label,
+          'description': port.description,
+          'type': port.type,
+          'unit': port.unit,
+          'groups_name': port.groups_name,
+          'params': port.params or {}
+        }
+        port_data_list.append(port_data)
+
+      # Обрабатываем данные вне контекста сессии
+      ports = []
+      for port_data in port_data_list:
+        # Проверяем статус публикации через AppConfig
+        is_published = await config.is_port_published(device_id, port_data['code'])
+        entity_id = await config.get_entity_id(device_id, port_data['code']) if is_published else ''
+
+        port_info = {
+          'code': port_data['code'],
+          'name': port_data['name'],
+          'label': port_data['label'],
+          'description': port_data['description'],
+          'type': port_data['type'],
+          'unit': port_data['unit'],
+          'groups_name': port_data['groups_name'],
+          'params': port_data['params'],
+          'ha_published': is_published,
+          'entity_id': entity_id,
+          'device_class': port_data['params'].get('device_class', '') if port_data['params'] else '',
+          'unit_of_measurement': port_data['params'].get('unit_of_measurement', '') if port_data['params'] else '',
+          'icon': port_data['params'].get('icon', '') if port_data['params'] else '',
+          'state_class': port_data['params'].get('state_class', '') if port_data['params'] else '',
+          'entity_category': port_data['params'].get('entity_category', '') if port_data['params'] else '',
+          'enabled_by_default': port_data['params'].get('enabled_by_default', 'true') if port_data[
+            'params'] else 'true',
+          'force_update': port_data['params'].get('force_update', 'false') if port_data['params'] else 'false',
+          'suggested_display_precision': port_data['params'].get('suggested_display_precision', '') if port_data[
+            'params'] else '',
+          'attributes': port_data['params'].get('attributes', {}) if port_data['params'] else {},
+          'ha_published_at': port_data['params'].get('ha_published_at', '') if port_data['params'] else ''
+        }
+        ports.append(port_info)
+
+      return ports
+
+  except Exception as e:
+    logger.error(f"Error loading ports from database: {e}")
+    return []
+
+
+def merge_ports_with_db_data(device_ports: List[Dict[str, Any]], db_ports: List[Dict[str, Any]]) -> List[
+  Dict[str, Any]]:
+  """
+  Объединяет порты с устройства с данными из базы данных
+  """
+  try:
+    # Создаем индекс портов из БД по коду
+    db_ports_index = {port['code']: port for port in db_ports}
+
+    # Объединяем данные
+    merged_ports = []
+    for device_port in device_ports:
+      port_code = device_port.get('code')
+      if port_code in db_ports_index:
+        # Объединяем данные устройства с данными из БД
+        db_port = db_ports_index[port_code]
+        merged_port = {**device_port, **db_port}
+        merged_ports.append(merged_port)
+      else:
+        # Порт есть на устройстве, но нет в БД
+        merged_ports.append(device_port)
+
+    # Добавляем порты из БД, которых нет на устройстве
+    device_codes = {port.get('code') for port in device_ports}
+    for db_port in db_ports:
+      if db_port['code'] not in device_codes:
+        merged_ports.append(db_port)
+
+    return merged_ports
+
+  except Exception as e:
+    logger.error(f"Error merging ports: {e}")
+    return device_ports

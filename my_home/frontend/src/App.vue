@@ -1,6 +1,7 @@
 <template>
   <v-app>
     <v-main>
+      {{ ha_store }}
       <!-- App messenger -->
       <AppMessenger/>
 
@@ -12,9 +13,14 @@
 
 <script>
 import {mapStores} from "pinia";
+import {useHAChangesStore} from '@/store/haChangesStore'
+// const haChangesStore = useHAChangesStore()
 
 export default {
   computed: {
+    ha_store() {
+      // return haChangesStore;
+    },
   },
   mounted() {
   },

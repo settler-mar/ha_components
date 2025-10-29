@@ -18,9 +18,12 @@ def add_ports_settings_routes(app: APIRouter):
                 if not device:
                     raise HTTPException(status_code=404, detail="Device not found")
                 
+                # Получаем params как словарь
+                params = device.params if isinstance(device.params, dict) else {}
+                
                 # Проверяем кешированную конфигурацию
-                if not refresh and device.params and 'logs_config' in device.params:
-                    cached_config = device.params['logs_config']
+                if not refresh and 'logs_config' in params:
+                    cached_config = params['logs_config']
                     # Проверяем, не старше ли кеш 5 минут
                     if 'cached_at' in cached_config:
                         from datetime import datetime, timedelta
@@ -28,7 +31,7 @@ def add_ports_settings_routes(app: APIRouter):
                         if datetime.now() - cached_at < timedelta(minutes=5):
                             return cached_config['data']
                 
-                ip = device.params.get('ip') if device.params else None
+                ip = params.get('ip')
                 if not ip:
                     raise HTTPException(status_code=400, detail="Device IP not configured")
                 
@@ -40,13 +43,11 @@ def add_ports_settings_routes(app: APIRouter):
                 config_data = response.json()
                 
                 # Кешируем конфигурацию
-                if not device.params:
-                    device.params = {}
-                
-                device.params['logs_config'] = {
+                params['logs_config'] = {
                     'data': config_data,
                     'cached_at': datetime.now().isoformat()
                 }
+                device.params = params
                 db.commit()
                 db.refresh(device)
                 
@@ -66,7 +67,8 @@ def add_ports_settings_routes(app: APIRouter):
                 if not device:
                     raise HTTPException(status_code=404, detail="Device not found")
                 
-                ip = device.params.get('ip') if device.params else None
+                params = device.params if isinstance(device.params, dict) else {}
+                ip = params.get('ip')
                 if not ip:
                     raise HTTPException(status_code=400, detail="Device IP not configured")
                 
@@ -91,7 +93,8 @@ def add_ports_settings_routes(app: APIRouter):
                 if not device:
                     raise HTTPException(status_code=404, detail="Device not found")
                 
-                ip = device.params.get('ip') if device.params else None
+                params = device.params if isinstance(device.params, dict) else {}
+                ip = params.get('ip')
                 if not ip:
                     raise HTTPException(status_code=400, detail="Device IP not configured")
                 
@@ -121,10 +124,9 @@ def add_ports_settings_routes(app: APIRouter):
                     raise HTTPException(status_code=404, detail="Device not found")
                 
                 # Update HA settings in database
-                if not device.params:
-                    device.params = {}
-                
-                device.params['haSettings'] = settings
+                params = device.params if isinstance(device.params, dict) else {}
+                params['haSettings'] = settings
+                device.params = params
                 db.commit()
                 db.refresh(device)
                 
@@ -143,10 +145,9 @@ def add_ports_settings_routes(app: APIRouter):
                     raise HTTPException(status_code=404, detail="Device not found")
                 
                 # Update favorite ports in database
-                if not device.params:
-                    device.params = {}
-                
-                device.params['favoritePorts'] = favorite_ports
+                params = device.params if isinstance(device.params, dict) else {}
+                params['favoritePorts'] = favorite_ports
+                device.params = params
                 db.commit()
                 db.refresh(device)
                 

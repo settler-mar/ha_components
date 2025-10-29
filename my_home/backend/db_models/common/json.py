@@ -9,6 +9,8 @@ class Json(TypeDecorator):
   impl = types.Text
 
   def process_bind_param(self, value, dialect):
+    if value is None:
+      return None
     return json.dumps(value)
 
   def process_literal_param(self, value, dialect):
@@ -16,6 +18,14 @@ class Json(TypeDecorator):
 
   def process_result_value(self, value, dialect):
     try:
-      return json.loads(value)
-    except (TypeError, ValueError):
-      return None
+      if value is None or value == '':
+        return {}
+      result = json.loads(value)
+      # Если результат не словарь, возвращаем пустой словарь
+      if not isinstance(result, dict):
+        print(f"[Json] Warning: json.loads returned {type(result)} instead of dict, value was: {value}")
+        return {}
+      return result
+    except (TypeError, ValueError) as e:
+      print(f"[Json] Error parsing JSON: {e}, value was: {value}")
+      return {}

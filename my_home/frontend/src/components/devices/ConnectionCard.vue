@@ -13,7 +13,10 @@
 
       <ActionHandler
         :actions="actions"
-        :ha-config-mode="haConfigMode"
+        :haConfigMode="haConfigMode"
+        :haChangesCount="totalHAChangesCount"
+        :hasHAChanges="hasHAChanges"
+        :devices="devices"
         @toggle-ha-config="toggleHAConfig"
       />
     </v-toolbar>
@@ -30,9 +33,9 @@
           v-for="device in devices || []"
           :key="device.id"
         >
-          <DeviceCard 
-            :device="device" 
-            :readonly="readonly" 
+          <DeviceCard
+            :device="device"
+            :readonly="readonly"
             :ha-config-mode="haConfigMode"
             @edit="editDevice"
             @toggle-ha-config="toggleHAConfig"
@@ -65,6 +68,7 @@ import DeviceCard from '@/components/devices/DeviceCard.vue'
 import DelButton from '@/components/UI/DelButton.vue'
 import UniversalDialog from '@/components/devices/UniversalDialog.vue'
 import ActionHandler from '@/components/devices/ActionHandler.vue'
+import { useHAChangesStore } from '@/store/haChangesStore'
 
 const props = defineProps({
   connection: Object,
@@ -78,6 +82,9 @@ const addDeviceDialog = ref(false)
 const connectionData = ref({})
 const haConfigMode = ref(false)
 
+// Initialize HA changes store
+const haChangesStore = useHAChangesStore()
+
 
 const connectionDef = computed(() => {
   return {}
@@ -85,6 +92,21 @@ const connectionDef = computed(() => {
 
 const connectionIcon = computed(() => {
   return connectionDef.value?.icon || '🔌'
+})
+
+// Подсчет изменений HA для всех устройств в соединении
+const totalHAChangesCount = computed(() => {
+  if (!props.devices) return 0
+  let total = 0
+  props.devices.forEach(device => {
+    total += haChangesStore.getDeviceChangesCount(device.id)
+  })
+  return total
+})
+
+// Проверка, есть ли изменения HA в соединении
+const hasHAChanges = computed(() => {
+  return totalHAChangesCount.value > 0
 })
 
 
@@ -179,6 +201,7 @@ const devicesParams = {
 }
 
 const actions = [{
+  "id": "ha-config",
   "name": "НАСТРОЙКА HA",
   "type": "request",
   "scope": "connection",
@@ -195,6 +218,7 @@ const actions = [{
     }
   }
 }, {
+  "id": "myhome-devices",
   "name": "Устройства MyHome",
   "type": "table_modal",
   "scope": "connection",
@@ -244,6 +268,7 @@ const actions = [{
     }],
   "refreshable": true
 }, {
+  "id": "add-device-by-ip",
   "name": "Добавить устройство по IP",
   "type": "request",
   "endpoint": "/api/live/add/{ip}",
@@ -265,28 +290,28 @@ const actions = [{
 
 function onDeviceAdded(deviceData) {
   addDeviceDialog.value = false
-  
+
   // Сохраняем HA настройки в params
-  if (deviceData.ha_integration_enabled !== undefined || 
-      deviceData.ha_entity_prefix !== undefined || 
+  if (deviceData.ha_integration_enabled !== undefined ||
+      deviceData.ha_entity_prefix !== undefined ||
       deviceData.ha_publish_device_online !== undefined) {
-    
+
     const haSettings = {
       enabled: deviceData.ha_integration_enabled ?? true,
       entityPrefix: deviceData.ha_entity_prefix || deviceData.name || 'device',
       publishDeviceOnline: deviceData.ha_publish_device_online ?? true
     }
-    
+
     // Обновляем params устройства
     deviceData.params = deviceData.params || {}
     deviceData.params.ha_integration = haSettings
-    
+
     // Удаляем временные поля
     delete deviceData.ha_integration_enabled
     delete deviceData.ha_entity_prefix
     delete deviceData.ha_publish_device_online
   }
-  
+
   emit('refresh')
 }
 
@@ -297,13 +322,13 @@ function openDialog(device) {
   // {'id': null, 'name': '', 'params': {'a':12}} => {'id': null, 'name': '', 'params.a': 12, 'connection_id': connection.id}
 
   const deviceData = {...device}
-  
+
   // Обрабатываем HA настройки
   const haSettings = device.params?.ha_integration || {}
   deviceData.ha_integration_enabled = haSettings.enabled ?? true
   deviceData.ha_entity_prefix = haSettings.entityPrefix || device.name || 'device'
   deviceData.ha_publish_device_online = haSettings.publishDeviceOnline ?? true
-  
+
   connectionData.value = deviceData
 }
 
@@ -336,11 +361,11 @@ function handleDeviceUpdate(updatedDevice) {
   .v-card-text {
     padding: 8px;
   }
-  
+
   .v-row {
     margin: -4px;
   }
-  
+
   .v-col {
     padding: 4px;
   }
@@ -350,11 +375,11 @@ function handleDeviceUpdate(updatedDevice) {
   .v-card-text {
     padding: 4px;
   }
-  
+
   .v-row {
     margin: -2px;
   }
-  
+
   .v-col {
     padding: 2px;
   }

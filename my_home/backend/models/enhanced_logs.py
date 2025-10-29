@@ -224,7 +224,7 @@ class EnhancedLogsManager:
                 if not device:
                     return False
                 
-                params = device.params or {}
+                params = device.params if isinstance(device.params, dict) else {}
                 gsheet_config = params.get('gsheet_logs', {})
                 
                 if not gsheet_config.get('enabled', False):
@@ -407,18 +407,18 @@ class EnhancedLogsManager:
             with db_session() as db:
                 device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
                 if device:
-                    if not device.params:
-                        device.params = {}
+                    params = device.params if isinstance(device.params, dict) else {}
                     
                     current_time = datetime.now().isoformat()
-                    device.params['last_logs_export'] = current_time
+                    params['last_logs_export'] = current_time
                     
                     # Добавляем лог в список экспортированных файлов
-                    uploaded_files = device.params.get('uploaded_files', [])
+                    uploaded_files = params.get('uploaded_files', [])
                     if log_name not in uploaded_files:
                         uploaded_files.append(log_name)
-                    device.params['uploaded_files'] = uploaded_files
+                    params['uploaded_files'] = uploaded_files
                     
+                    device.params = params
                     db.commit()
                     
                     # Отправляем WebSocket уведомление об обновлении устройства

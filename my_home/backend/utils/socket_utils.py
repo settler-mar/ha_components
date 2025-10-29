@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime
 import json
 from utils.logs import log_print
+from utils.logger import api_logger as logger
 import threading
 
 
@@ -12,7 +13,7 @@ import threading
 def serialize_datetime(obj):
   if isinstance(obj, datetime):
     return obj.isoformat()
-  print("Type not serializable", obj)
+  logger.error(f"Type not serializable: {obj}")
   raise TypeError("Type not serializable")
 
 
@@ -43,12 +44,12 @@ class ConnectionManager:
           self.logs_history = self.logs_history[-self.max_history:]
           await self.broadcast(data)
         except Exception as e:
-          print(f"Error processing item: {e}")
+          logger.error(f"Error processing item: {e}")
       await asyncio.sleep(0.1)
 
   async def connect(self, websocket: WebSocket):
     token = websocket.cookies.get("token")
-    log_print("Connection established", websocket.client.host, token)
+    logger.info(f"WebSocket connection established from {websocket.client.host} with token: {token}")
     # todo check auth
 
     await websocket.accept()
@@ -65,10 +66,10 @@ class ConnectionManager:
         json_data = json.dumps(data, default=serialize_datetime)
         await asyncio.create_task(connection.send_text(json_data))
       except WebSocketDisconnect:
-        log_print("Disconnecting", connection.client.host)
+        logger.info(f"WebSocket disconnecting from {connection.client.host}")
         self.disconnect(connection)
       except Exception as e:
-        print(f"Error sending to client: {e}")
+        logger.error(f"Error sending to client: {e}")
 
   def broadcast_log(self,
                     text: str = None,
@@ -116,7 +117,35 @@ class ConnectionManager:
       "ts": datetime.now().timestamp()
     }
     data = {k: v for k, v in data.items() if v is not None}
-    log_print({k: v for k, v in data.items() if v not in ['permission', 'level', 'ts', 'type']})
+    
+    # Логируем через наш новый логгер
+    log_message = data.get('message', '')
+    log_level = data.get('level', 'info')
+    device_id = data.get('device_id')
+    class_name = data.get('class_name', 'SocketUtils')
+    action = data.get('action', '')
+    value = data.get('value')
+    
+    # Формируем сообщение для логгера
+    if device_id:
+        log_message = f"[Device {device_id}] {log_message}"
+    if action:
+        log_message = f"{log_message} (Action: {action})"
+    if value:
+        log_message = f"{log_message} (Value: {value})"
+    
+    # Выбираем уровень логирования
+    if log_level == 'info':
+        logger.info(log_message)
+    elif log_level == 'warning':
+        logger.warning(log_message)
+    elif log_level == 'error':
+        logger.error(log_message)
+    elif log_level == 'debug':
+        logger.debug(log_message)
+    else:
+        logger.info(log_message)
+    
     self.logs_queue.append((data, permission))
 
 

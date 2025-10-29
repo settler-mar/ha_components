@@ -464,7 +464,7 @@ def add_logs_backup_routes(app: APIRouter):
                 last_export_info = None
                 
                 # Проверяем настройки Google Sheets
-                params = device.params or {}
+                params = device.params if isinstance(device.params, dict) else {}
                 gsheet_config = params.get('gsheet_logs', {})
                 gsheet_enabled = gsheet_config.get('enabled', False)
                 
@@ -541,7 +541,7 @@ def add_logs_backup_routes(app: APIRouter):
                 if not device:
                     raise HTTPException(status_code=404, detail="Device not found")
                 
-                params = device.params or {}
+                params = device.params if isinstance(device.params, dict) else {}
                 ip = params.get('ip')
                 if not ip:
                     raise HTTPException(status_code=400, detail="Device IP not found")
@@ -745,7 +745,7 @@ def add_logs_backup_routes(app: APIRouter):
                 if not device:
                     raise HTTPException(status_code=404, detail="Device not found")
                 
-                params = device.params or {}
+                params = device.params if isinstance(device.params, dict) else {}
                 ip = params.get('ip')
                 if not ip:
                     raise HTTPException(status_code=400, detail="Device IP not found")
