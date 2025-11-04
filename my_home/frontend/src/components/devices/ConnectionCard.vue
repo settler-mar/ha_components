@@ -37,7 +37,7 @@
             :device="device"
             :readonly="readonly"
             :ha-config-mode="haConfigMode"
-            @edit="editDevice"
+            :custom-params="devicesParams"
             @toggle-ha-config="toggleHAConfig"
             @device-updated="handleDeviceUpdate"
           />
@@ -76,7 +76,7 @@ const props = defineProps({
   readonly: Boolean,
 })
 
-const emit = defineEmits(['edit', 'deleted', 'refresh', 'action', 'device-updated'])
+const emit = defineEmits(['deleted', 'refresh', 'action', 'device-updated'])
 
 const addDeviceDialog = ref(false)
 const connectionData = ref({})
@@ -111,9 +111,6 @@ const hasHAChanges = computed(() => {
 
 
 const devicesParams = {
-  'code': {
-    'readonly': true,
-  },
   'ha_integration_enabled': {
     'name': 'ha_integration_enabled',
     'type': 'boolean',
@@ -134,69 +131,6 @@ const devicesParams = {
     'label': 'Публиковать статус устройства',
     'description': 'Создаёт сущность для отслеживания онлайн статуса устройства',
     'default': true
-  },
-  'model': {
-    'readonly': true,
-  },
-  'vendor': {
-    'readonly': true,
-  },
-  'type': {
-    'readonly': true,
-  },
-  'params.backup_config': {
-    'type': 'bool',
-    'default': true,
-    'description': 'Сохранять конфигурацию',
-  },
-  'params.save_logs': {
-    'type': 'bool',
-    'default': true,
-    'description': 'Сохранять логи',
-  },
-  'params.remove_logs': {
-    'type': 'bool',
-    'default': true,
-    'description': 'Удалять логи после сохранения',
-  },
-  'params.log_save_method': {
-    'type': 'list',
-    'default': 'gsheet',
-    'description': 'Метод сохранения логов',
-    'options': {
-      'local_save': 'На сервере',
-      'gsheet': 'Google Sheets',
-    },
-  },
-  'params.ip': {
-    'type': 'str',
-    'default': null,
-    'description': 'IP адрес устройства',
-    'readonly': true,
-  },
-  'params.mac': {
-    'type': 'str',
-    'default': null,
-    'description': 'MAC адрес устройства',
-    'readonly': true,
-  },
-  'params.ssid': {
-    'type': 'str',
-    'default': null,
-    'description': 'SSID устройства',
-    'readonly': true,
-  },
-  'params.flash_date': {
-    'type': 'str',
-    'default': null,
-    'description': 'Дата прошивки устройства',
-    'readonly': true,
-  },
-  'params.version': {
-    'type': 'str',
-    'default': null,
-    'description': 'Версия прошивки устройства',
-    'readonly': true,
   },
 }
 
@@ -330,10 +264,6 @@ function openDialog(device) {
   deviceData.ha_publish_device_online = haSettings.publishDeviceOnline ?? true
 
   connectionData.value = deviceData
-}
-
-function editDevice(device) {
-  openDialog(device)
 }
 
 function handleAction(action) {

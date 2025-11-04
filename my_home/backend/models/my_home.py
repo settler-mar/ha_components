@@ -50,10 +50,18 @@ async def fetch_info(session, ip, semaphore):
 
 
 class ConfigVersionManager:
-  def __init__(self, base_url, device_id, config_dir='/config', backup_root='../data/backup'):
+  def __init__(self, base_url, device_id, config_dir='/config', backup_root=None):
+    from utils.configs import get_data_dir
+    
     self.base_url = base_url.rstrip('/')
     self.device_id = device_id
     self.config_dir = config_dir
+    
+    # Используем универсальную функцию для определения пути к data
+    if backup_root is None:
+      data_dir = get_data_dir()
+      backup_root = os.path.join(data_dir, 'backup')
+    
     self.backup_root = os.path.realpath(os.path.join(backup_root, str(device_id)))
     logger.debug(f"Backup root: {self.backup_root}")
     self.log_file = os.path.join(self.backup_root, 'backup.log')
@@ -548,7 +556,8 @@ class MyHomeClass(SingletonClass):
       self._devices_loaded = True
 
   def _save_logs_local(self, name, content, device_id, ip):
-    logs_root = "../store/backup/logs"
+    from utils.configs import get_data_dir
+    logs_root = os.path.join(get_data_dir(), "store", "backup", "logs")
     os.makedirs(logs_root, exist_ok=True)
 
     # Конкатенируем в файл по имени
@@ -1007,7 +1016,8 @@ class MyHomeClass(SingletonClass):
     Миграция всех старых log.json файлов при старте системы
     """
     try:
-      backup_root = "../data/backup"
+      from utils.configs import get_data_dir
+      backup_root = os.path.join(get_data_dir(), "backup")
       if not os.path.exists(backup_root):
         return
 
@@ -1546,6 +1556,31 @@ def add_routes(app: APIRouter, my_home: MyHomeClass):
     """
     logger.info("=== GET /api/live/test called ===")
     return {"status": "ok", "message": "Live routes are working", "my_home_exists": my_home is not None}
+
+  @app.get("/api/live/{ip}/info", tags=["live"])
+  async def get_device_info(ip: str):
+    """
+    Получить информацию об устройстве с эндпоинта /info
+    """
+    try:
+      url = f"http://{ip}/info"
+      async with aiohttp.ClientSession() as session:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+          text = await response.text()
+          if response.status == 200:
+            try:
+              data = json.loads(text)
+              data['ip'] = ip
+              return data
+            except json.JSONDecodeError:
+              return {"error": "JSON decode error", "raw_response": text, "ip": ip}
+          else:
+            return {"error": f"HTTP {response.status}", "raw_response": text, "ip": ip}
+    except asyncio.TimeoutError:
+      return {"error": "Timeout error", "ip": ip}
+    except Exception as e:
+      logger.error(f"Error fetching device info for {ip}: {e}")
+      return {"error": str(e), "ip": ip}
 
   @app.get("/api/live/devices", tags=["live"])
   async def get_devices():

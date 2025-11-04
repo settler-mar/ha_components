@@ -105,10 +105,10 @@ const toggleValue = (event) => {
   position: relative;
   width: 50px;
   height: 24px;
-  background: rgba(255, 255, 255, 0.2);
+  background: #9e9e9e; /* Серый по умолчанию (выкл) */
   border-radius: 12px;
-  transition: background-color 0.3s ease;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+  border: 1px solid #9e9e9e;
 }
 
 .switch-slider::before {
@@ -125,13 +125,18 @@ const toggleValue = (event) => {
 }
 
 .digital-switch.active .switch-slider {
-  background: #68b700;
-  border-color: #68b700;
+  background: #1976d2; /* Синий для вкл */
+  border-color: #1976d2;
 }
 
 .digital-switch.active .switch-slider::before {
   transform: translateX(26px);
   background: #ffffff;
+}
+
+.digital-switch:not(.active) .switch-slider {
+  background: #9e9e9e; /* Серый для выкл */
+  border-color: #9e9e9e;
 }
 
 .switch-labels {
@@ -147,9 +152,12 @@ const toggleValue = (event) => {
   transition: color 0.3s ease;
 }
 
-.label-off.active,
 .label-on.active {
-  color: #68b700;
+  color: #1976d2; /* Синий для вкл */
+}
+
+.label-off.active {
+  color: #9e9e9e; /* Серый для выкл */
 }
 
 .status-indicator {
@@ -168,8 +176,8 @@ const toggleValue = (event) => {
 }
 
 .status-indicator.active .indicator-dot {
-  background: #68b700;
-  box-shadow: 0 0 8px rgba(104, 183, 0, 0.5);
+  background: #1976d2; /* Синий для вкл */
+  box-shadow: 0 0 8px rgba(25, 118, 210, 0.5);
 }
 
 .status-text {
@@ -178,7 +186,7 @@ const toggleValue = (event) => {
 }
 
 .status-indicator.active .status-text {
-  color: #68b700;
+  color: #1976d2; /* Синий для вкл */
 }
 
 /* Hover эффекты для интерактивных элементов */
@@ -187,7 +195,11 @@ const toggleValue = (event) => {
 }
 
 .digital-switch.active:not(.disabled):hover .switch-slider {
-  background: #7bc908;
+  background: #1565c0; /* Темнее синий при наведении */
+}
+
+.digital-switch:not(.active):not(.disabled):hover .switch-slider {
+  background: #757575; /* Темнее серый при наведении */
 }
 
 /* Темная тема */
@@ -201,6 +213,8 @@ const toggleValue = (event) => {
   }
 }
 </style>
+
+
 
 
 

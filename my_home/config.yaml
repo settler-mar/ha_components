@@ -1,30 +1,23 @@
 name: "MY_HOME-devices"
-version: "0.0.5"
+version: "0.0.9"
 slug: "my_home_devices"
 description: "Custom addon for managing devices in MY_HOME environment"
-#url: "https://github.com/yourname/my_custom_addon"
+url: https://github.com/settler-mar/ha_components
 startup: services
 boot: auto
 
-options:
-  local_network: "192.168.0.1/24"
-  gsheet: ""
-  scan_timeout: 2
-  is_fast_scan: true
-  save_config_hour: 1
-  save_logs_period: 2
-  save_logs_hour: 1
-  save_logs_minute: 1
+# Бэкап аддона: останавливаем на время создания снапшота (консистентность данных)
+# backup: cold
 
-schema:
-  local_network: str
-  gsheet: str
-  scan_timeout: int
-  is_fast_scan: bool
-  save_config_hour: int
-  save_logs_period: int
-  save_logs_hour: int
-  save_logs_minute: int
+# Из /data аддона НЕ попадут в бэкап эти подпапки (маски glob)
+# Исключаем всё кроме папки data (dist, backup, docker образы и т.д.)
+backup_exclude:
+  - dist/**
+  - backup/**
+  - docker/**
+  - cache/**
+  - tmp/**
+  - __pycache__/**
 
 #host_network: true
 ingress: true
@@ -32,16 +25,19 @@ ingress_port: 3000
 panel_icon: mdi:chip
 panel_title: "My Devices"
 
-init: false
+init: true
 hassio_api: true
 homeassistant_api: true
 auth_api: true
 stdin: false
 
-# Настройки для бэкапа - указываем только папки данных
+# Доступ к общей папке HA (для больших/временных файлов, чтобы не тащить их в бэкап аддона)
+# dist и backup должны находиться в /share/my_home_devices/ и будут доступны только для чтения
+# через монтирование share
 map:
+  - share
   - data
-  - data_src
+  - addons
 
 arch:
   - amd64

@@ -295,7 +295,8 @@ def add_ha_routes(app: APIRouter):
           raise HTTPException(status_code=404, detail="Device not found")
 
         # Получаем информацию о последнем бэкапе
-        backup_root = f"../data/backup/{device_id}"
+        from utils.configs import get_data_dir
+        backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
         last_backup = None
         if os.path.exists(backup_root):
           try:
@@ -308,7 +309,8 @@ def add_ha_routes(app: APIRouter):
             pass
 
         # Получаем информацию о последних логах
-        logs_root = f"../store/backup/logs/{device_id}"
+        from utils.configs import get_data_dir
+        logs_root = os.path.join(get_data_dir(), "store", "backup", "logs", str(device_id))
         last_logs = None
         if os.path.exists(logs_root):
           try:

@@ -2,7 +2,20 @@
   <v-card class="mb-2 device-card" elevation="1">
     <v-toolbar density="compact" :elevation="1" border>
       📟 {{ device.name }}
-      <v-chip density="comfortable" size="x-small" color="info">id: {{ device.id }}</v-chip>
+      <v-chip 
+        density="comfortable" 
+        size="x-small" 
+        color="info"
+        class="device-id-chip"
+        @click="copyDeviceIP"
+      >
+        <v-tooltip location="top">
+          <template v-slot:activator="{ props }">
+            <span v-bind="props">id: {{ device.id }}</span>
+          </template>
+          <span>IP: {{ deviceIP || 'N/A' }}</span>
+        </v-tooltip>
+      </v-chip>
 
       <!-- Индикация обновления устройства -->
       <div class="update-indicator-wrapper device-update-wrapper">
@@ -54,8 +67,14 @@
         :actions="actions"
         :params="{device_id: device.id, ...device, ...(device?.params || {})}"
       >
-        <v-btn icon v-if="!readonly" @click="$emit('edit', device)">
-          <v-icon size="18" icon="mdi-pencil"/>
+        <v-btn 
+          icon 
+          v-if="!readonly" 
+          @click="refreshDeviceData"
+          :loading="refreshingDeviceData"
+          class="me-1"
+        >
+          <v-icon size="18" icon="mdi-refresh"/>
         </v-btn>
       </ActionHandler>
     </v-toolbar>
@@ -169,70 +188,6 @@
     </v-card-text>
 
 
-    <!-- Диалог управления options/config -->
-    <v-dialog v-model="editOptionsDialog" max-width="600px">
-      <v-card>
-        <v-tabs v-model="optionsTab" background-color="primary" dark>
-          <v-tab v-if="optionsPorts.length" value="options">Options</v-tab>
-          <v-tab v-if="configPorts.length" value="config">Config</v-tab>
-        </v-tabs>
-        <v-tabs-window v-model="optionsTab">
-          <v-tabs-window-item value="options" v-if="optionsPorts.length">
-            <v-card-text>
-              <table>
-                <tr v-for="port in optionsPorts" :key="port.id">
-                  <td>
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <div v-bind="props" class="d-flex align-center">
-                          <span>{{ port.label || port.name }}</span>
-                        </div>
-                      </template>
-                      {{ port.description || '' }}
-                    </v-tooltip>
-                  </td>
-                  <td class="py-1 text-right">
-                    <span class="ml-1">{{ getPortValue(port) }}</span>
-                  </td>
-                </tr>
-              </table>
-            </v-card-text>
-          </v-tabs-window-item>
-          <v-tabs-window-item value="config" v-if="configPorts.length">
-            <v-card-text>
-              <table>
-                <tr v-for="port in configPorts" :key="port.id">
-                  <td>
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <div v-bind="props" class="d-flex align-center">
-                          <span>{{ port.label || port.name }}</span>
-                        </div>
-                      </template>
-                      {{ port.description || '' }}
-                    </v-tooltip>
-                  </td>
-                  <td class="py-1 text-right">
-                    <span class="ml-1">{{ getPortValue(port) }}</span>
-                  </td>
-                </tr>
-              </table>
-            </v-card-text>
-          </v-tabs-window-item>
-        </v-tabs-window>
-
-
-        <v-card-actions>
-          <v-spacer></v-spacer>
-
-          <v-btn
-            text="Close"
-            @click="editOptionsDialog = false"
-          ></v-btn>
-        </v-card-actions>
-      </v-card>
-
-    </v-dialog>
 
     <!-- Унифицированная модалка деталей -->
     <DeviceDetailsModal
@@ -251,11 +206,16 @@
       :loading-log-files="loadingLogFiles"
       :logs-status-color="logsStatusColor"
       :logs-status-text="logsStatusText"
+      :log-files="logFiles"
       :device-data="currentDeviceData"
       :ports-data="flattenedPorts"
       :logs-config="logsConfig"
-      :log-files="logFiles"
+      :device-info="deviceInfo"
+      :loading-device-info="loadingDeviceInfo"
+      :device="device"
+      :custom-params="props.customParams"
       @close="showDetailsModal = false"
+      @load-device-info="loadDeviceInfo"
       @trigger-backup="triggerManualBackup"
       @trigger-forced-backup="triggerForcedBackup"
       @refresh-backup-history="loadBackupHistory"
@@ -272,6 +232,7 @@
       @update-ha-settings="handleUpdateHASettings"
       @update-favorite-ports="handleUpdateFavoritePorts"
       @update-logs-config="handleUpdateLogsConfig"
+      @device-updated="handleDeviceUpdate"
     />
 
     <!-- Модалка просмотра содержимого лог-файла -->
@@ -322,6 +283,7 @@ import {useTableStore} from '@/store/tables'
 import MyFormField from '@/components/form_elements/MyFormField.vue'
 import {usePortsStore} from '@/store/portsStore'
 import {useHAChangesStore} from '@/store/haChangesStore'
+import useMessageStore from '@/store/messages'
 import {secureFetch} from '@/services/fetch'
 import {webSocketService} from '@/services/websocket'
 import UpdateIndicator from '@/components/UpdateIndicator.vue'
@@ -342,14 +304,19 @@ const props = defineProps({
   haConfigMode: {
     type: Boolean,
     default: false
+  },
+  customParams: {
+    type: Object,
+    default: () => ({})
   }
 })
 
-const emit = defineEmits(['edit', 'device-updated'])
+const emit = defineEmits(['device-updated'])
 
 const tableStore = useTableStore()
 const portsStore = usePortsStore()
 const haChangesStore = useHAChangesStore()
+const messageStore = useMessageStore()
 
 const port_metadata = computed(() => {
   const metadata = {}
@@ -492,6 +459,11 @@ const updatedPorts = ref(new Set())
 const updatedGroups = ref(new Set())
 const deviceUpdated = ref(false)
 
+// Проверка наличия ожидающих изменений HA для этого устройства
+const hasPendingHAChanges = computed(() => {
+  return haChangesStore.getDeviceChangesCount(props.device.id) > 0
+})
+
 // Функция для проверки статуса публикации порта в HA
 const isPortPublishedToHA = (portCode) => {
   return haStatus.value[portCode]?.ha_published || false
@@ -590,6 +562,7 @@ const handleSettingsUpdated = async () => {
 onMounted(async () => {
   await loadDeviceData()
   await loadHASettings()
+  await loadDeviceInfo()
   subscribeToPortUpdates()
   subscribeToDeviceUpdates()
 })
@@ -683,8 +656,6 @@ const isGroupExpanded = (groupTitle) => {
 
 const maxPortsWithoutScroll = 10
 const showConfigPorts = ref(false)
-const editOptionsDialog = ref(false)
-const optionsTab = ref(0)
 
 const portsHeaders = [
   {title: 'ID', key: 'id'},
@@ -1256,11 +1227,40 @@ const showNotification = (text, color = 'success') => {
 
 // Локальные данные устройства для обновления статусов
 const localDeviceData = ref({})
+const refreshingDeviceData = ref(false)
+const deviceInfo = ref(null)
 
-// Обновление данных устройства
-const refreshDeviceData = async () => {
+// IP адрес устройства
+const deviceIP = computed(() => {
+  const deviceData = Object.keys(localDeviceData.value).length > 0 ? localDeviceData.value : props.device
+  return deviceData?.params?.ip || deviceData?.ip || null
+})
+
+// Функция копирования IP адреса
+const copyDeviceIP = async () => {
+  const ip = deviceIP.value
+  if (!ip) {
+    messageStore.showWarning('IP адрес устройства не найден')
+    return
+  }
+  
   try {
-    // Запрашиваем обновленные данные устройства
+    await navigator.clipboard.writeText(ip)
+    messageStore.showSuccess(`IP адрес ${ip} скопирован в буфер обмена`)
+  } catch (error) {
+    console.error('Error copying IP:', error)
+    messageStore.showError('Ошибка копирования IP адреса')
+  }
+}
+
+// Принудительная загрузка данных устройства
+const refreshDeviceData = async () => {
+  refreshingDeviceData.value = true
+  try {
+    // Загружаем данные с устройства
+    await loadDeviceData()
+    
+    // Запрашиваем обновленные данные устройства из базы
     const response = await secureFetch(`/api/devices/${props.device.id}`)
     if (response.ok) {
       const updatedDevice = await response.json()
@@ -1268,9 +1268,50 @@ const refreshDeviceData = async () => {
       localDeviceData.value = updatedDevice
       // Эмитим событие для обновления родительского компонента
       emit('device-updated', updatedDevice)
+      messageStore.showSuccess('Данные устройства обновлены')
+      showDeviceUpdate()
     }
   } catch (error) {
     console.error('Error refreshing device data:', error)
+    messageStore.showError('Ошибка обновления данных устройства')
+  } finally {
+    refreshingDeviceData.value = false
+  }
+}
+
+const loadingDeviceInfo = ref(false)
+
+// Загрузка информации об устройстве с /info
+const loadDeviceInfo = async () => {
+  // Пробуем получить IP из разных источников
+  let ip = deviceIP.value
+  
+  // Если IP не найден, пробуем получить из props.device
+  if (!ip) {
+    ip = props.device?.params?.ip || props.device?.ip || null
+  }
+  
+  if (!ip) {
+    deviceInfo.value = { error: 'IP адрес устройства не найден. Убедитесь, что устройство подключено к сети.' }
+    loadingDeviceInfo.value = false
+    return
+  }
+  
+  loadingDeviceInfo.value = true
+  try {
+    const response = await secureFetch(`/api/live/${ip}/info`)
+    if (response.ok) {
+      const data = await response.json()
+      deviceInfo.value = data
+    } else {
+      const errorData = await response.json().catch(() => ({}))
+      deviceInfo.value = { error: errorData.error || 'Ошибка загрузки информации', ip: ip }
+    }
+  } catch (error) {
+    console.error('Error loading device info:', error)
+    deviceInfo.value = { error: error.message || 'Ошибка соединения', ip: ip }
+  } finally {
+    loadingDeviceInfo.value = false
   }
 }
 
@@ -1423,6 +1464,16 @@ const handleUpdateLogsConfig = async (config) => {
   display: flex;
   flex-direction: column;
   min-width: 300px; /* Минимальная ширина для лучшего отображения портов */
+}
+
+.device-id-chip {
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.device-id-chip:hover {
+  background-color: rgba(33, 150, 243, 0.2) !important;
 }
 
 .info-line {

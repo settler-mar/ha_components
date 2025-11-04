@@ -12,13 +12,17 @@ from utils.logger import api_logger as logger
 # https://console.cloud.google.com/apis/library?hl=ru&inv=1&invt=Abtb0w&project=myhome-455318
 
 class GoogleConnector:
-  def __init__(self, strict=True):
-    self.store_path = "../data"
+  def __init__(self, strict=True, allow_console_auth=False):
+    from utils.configs import get_data_dir
+    
+    # Используем универсальную функцию для определения пути к data
+    self.store_path = get_data_dir()
     self.creds_path = os.path.join(self.store_path, "google_token.json")  # access/refresh токены
     self.auth_path = os.path.join(self.store_path + '_src', "google_credentials.json")  # credentials для авторизации
     self.creds = None
     self.service = None
     self.strict = strict
+    self.allow_console_auth = allow_console_auth  # Разрешить автоматическое открытие браузера через консоль
     self.enabled = self._authorize()
 
   def _authorize(self):
@@ -28,6 +32,12 @@ class GoogleConnector:
     if os.path.exists(self.creds_path):
       self.creds = Credentials.from_authorized_user_file(self.creds_path, SCOPES)
     elif os.path.exists(self.auth_path):
+      # Если allow_console_auth=False, не открываем браузер автоматически
+      # Токен должен быть получен через UI
+      if not self.allow_console_auth:
+        logger.info("[GoogleConnector] Токен не найден. Получите токен через UI в настройках аддона.")
+        return False
+      
       flow = InstalledAppFlow.from_client_secrets_file(self.auth_path, SCOPES)
       # Проверяем, есть ли графический интерфейс (не в Docker)
       try:

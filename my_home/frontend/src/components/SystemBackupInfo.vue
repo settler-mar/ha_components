@@ -7,13 +7,6 @@
             <v-icon class="mr-2">mdi-cog</v-icon>
             Бэкапы конфигураций устройств
             <v-spacer></v-spacer>
-            <v-btn 
-              icon="mdi-refresh" 
-              size="small" 
-              variant="text"
-              @click="refreshData"
-              :loading="loading"
-            ></v-btn>
           </v-card-title>
 
           <v-card-text>
@@ -180,6 +173,11 @@ const refreshData = async () => {
     loading.value = false
   }
 }
+
+// Экспортируем метод для использования из родительского компонента
+defineExpose({
+  refreshData
+})
 
 const loadSystemBackupInfo = async () => {
   try {

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Cookie, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from datetime import datetime
 import json
 
@@ -17,6 +17,7 @@ from models.device import add_myhome_device_routes
 from models.ha_routes import add_ha_routes
 from models.logs_backup_routes import add_logs_backup_routes
 from models.ports_settings_routes import add_ports_settings_routes
+from models.addon_config_routes import add_addon_config_routes
 
 from utils.google_connector import GoogleConnector
 
@@ -42,19 +43,28 @@ async def ingress_middleware(request: Request, call_next):
 
   # Проверяем, является ли это ingress запросом
   path = request.url.path
-  if path.startswith('/api/hassio_ingress/'):
-    # Извлекаем токен из пути
-    parts = path.split('/')
-    if len(parts) >= 4:
-      token = parts[3]
-      # Убираем ingress префикс из пути
-      new_path = '/' + '/'.join(parts[4:]) if len(parts) > 4 else '/'
-      # Создаем новый request с исправленным путем
-      request.scope['path'] = new_path
-      logger.debug(f"Ingress token: {token}, new path: {new_path}")
-
-  response = await call_next(request)
-  return response
+  try:
+    if path.startswith('/api/hassio_ingress/'):
+      # Извлекаем токен из пути
+      parts = path.split('/')
+      if len(parts) >= 4:
+        token = parts[3]
+        # Убираем ingress префикс из пути
+        new_path = '/' + '/'.join(parts[4:]) if len(parts) > 4 else '/'
+        # Создаем новый request с исправленным путем
+        request.scope['path'] = new_path
+        logger.debug(f"Ingress token: {token}, new path: {new_path}")
+    
+    response = await call_next(request)
+    return response
+  except Exception as e:
+    logger.error(f"Ingress middleware error: {e}", exc_info=True)
+    # Возвращаем 503 если произошла ошибка в middleware
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+      status_code=503,
+      content={"detail": f"Service temporarily unavailable: {str(e)}"}
+    )
 
 
 logger.info("Starting FastAPI server...")
@@ -75,6 +85,7 @@ def init(add_routes=True):
     add_logs_backup_routes(app)
     add_ports_settings_routes(app)
     add_logger_routes(app)
+    add_addon_config_routes(app)
     logger.info("Routes added to FastAPI app")
 
   # Загружаем устройства из базы данных
@@ -199,10 +210,11 @@ def join_dist():
 
     # Проверяем разные возможные пути для фронтенда
     possible_paths = [
-      path.join(build_dir, 'dist'),  # Локальный путь в backend
-      path.join(build_dir, 'frontend', 'dist'),
-      '/backend/dist',  # Docker путь
-      path.join(build_dir, '..', 'frontend', 'dist')
+      path.join(build_dir, 'dist'),  # Локальный путь в проекте (для Docker/HA)
+      path.join(build_dir, 'frontend', 'dist'),  # Для локальной разработки
+      path.join(build_dir, '..', 'frontend', 'dist'),  # Альтернативный путь
+      '/my_home/dist',  # Прямой путь для контейнера
+      '/addons/my_addons/my_home/dist',  # Прямой путь для Home Assistant (исходный)
     ]
 
     build_dir = None
@@ -261,9 +273,33 @@ def join_dist():
       file_path = path.join(build_dir, catchall)
       if path.exists(file_path) and path.isfile(file_path):
         logger.debug(f"Serving file: {file_path}")
+        # Для index.html добавляем заголовки, запрещающие кеширование
+        if catchall == "index.html" or file_path == index_path:
+          with open(file_path, 'rb') as f:
+            content = f.read()
+          return Response(
+            content=content,
+            media_type="text/html",
+            headers={
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              "Pragma": "no-cache",
+              "Expires": "0"
+            }
+          )
         return FileResponse(file_path)
       logger.debug(f"Serving index.html for: /{catchall}")
-      return FileResponse(index_path)
+      # Для index.html добавляем заголовки, запрещающие кеширование
+      with open(index_path, 'rb') as f:
+        content = f.read()
+      return Response(
+        content=content,
+        media_type="text/html",
+        headers={
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0"
+        }
+      )
 
     logger.success("Frontend successfully configured")
 
@@ -272,7 +308,9 @@ def join_dist():
     logger.warning("No build directory found. Running in development mode.")
 
 
-GoogleConnector(False)
+# GoogleConnector инициализируется лениво при необходимости
+# Автоматическое открытие браузера отключено (allow_console_auth=False)
+# Токен должен быть получен через UI в настройках аддона
 
 
 # Инициализация HA Manager

@@ -1,0 +1,61 @@
+{
+  "module_settings": {
+    "HA-Manager": {
+      "level": "INFO",
+      "colors": true,
+      "enabled": true
+    },
+    "MyHome": {
+      "level": "INFO",
+      "colors": true,
+      "enabled": false
+    },
+    "Database": {
+      "level": "WARNING",
+      "colors": true,
+      "enabled": false
+    },
+    "WebSocket": {
+      "level": "DEBUG",
+      "colors": true,
+      "enabled": false
+    },
+    "API": {
+      "level": "INFO",
+      "colors": true,
+      "enabled": false
+    },
+    "Config": {
+      "level": "WARNING",
+      "colors": true,
+      "enabled": false
+    },
+    "Device": {
+      "level": "INFO",
+      "colors": true,
+      "enabled": false
+    },
+    "Port": {
+      "level": "DEBUG",
+      "colors": true,
+      "enabled": false
+    },
+    "GoogleConnector": {
+      "level": "INFO",
+      "colors": true,
+      "enabled": false
+    },
+    "Singleton": {
+      "level": "DEBUG",
+      "colors": true,
+      "enabled": false
+    }
+  },
+  "global_settings": {
+    "enable_timestamps": true,
+    "enable_icons": true,
+    "enable_colors": true,
+    "show_module_names": true,
+    "min_global_level": "DEBUG"
+  }
+}

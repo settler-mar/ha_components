@@ -26,6 +26,19 @@ const store = defineStore("messages", {
     removeMessage(id) {
       this.messages = this.messages.filter((message) => message.id !== id);
     },
+    // Helper methods for convenience
+    showSuccess(message) {
+      this.addMessage({type: 'success', text: message});
+    },
+    showError(message) {
+      this.addMessage({type: 'error', text: message});
+    },
+    showWarning(message) {
+      this.addMessage({type: 'warning', text: message});
+    },
+    showInfo(message) {
+      this.addMessage({type: 'info', text: message});
+    },
   },
 });
 

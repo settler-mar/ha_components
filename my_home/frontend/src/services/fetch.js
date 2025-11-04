@@ -26,6 +26,31 @@ function getApiUrl(path) {
   return finalUrl;
 }
 
+// Функция для retry запросов при ошибках 503
+async function fetchWithRetry(url, options, maxRetries = 3, retryDelay = 1000) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // Если получили 503, пытаемся повторить (кроме последней попытки)
+      if (response.status === 503 && attempt < maxRetries - 1) {
+        console.warn(`[API] Service Unavailable (503), retrying... (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay * (attempt + 1)));
+        continue;
+      }
+      
+      return response;
+    } catch (error) {
+      // Если это последняя попытка, пробрасываем ошибку
+      if (attempt === maxRetries - 1) {
+        throw error;
+      }
+      console.warn(`[API] Network error, retrying... (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, retryDelay * (attempt + 1)));
+    }
+  }
+}
+
 function secureFetch(url, {
   method,
   data,
@@ -91,12 +116,16 @@ function secureFetch(url, {
   // Преобразуем URL для ingress если нужно
   const finalUrl = getApiUrl(url);
   // console.log('secureFetch', finalUrl, method, data, dataType, headers, body);
-  return fetch(finalUrl, {
+  
+  const fetchOptions = {
     method: method || "GET",
     body,
     mode: "cors",
     headers
-  }).then(response => {
+  };
+  
+  // Используем fetchWithRetry для автоматического повтора при 503
+  return fetchWithRetry(finalUrl, fetchOptions).then(response => {
     // Server returned a status code of 2XX
     if (response.ok) {
       // you can call response.json() here if you want to return the json
@@ -132,6 +161,10 @@ function secureFetch(url, {
             break;
           case 500:
             errorMessage = errorMessage || 'Internal server error';
+            break;
+          case 503:
+            errorMessage = errorMessage || 'Service Unavailable - сервер временно недоступен. Попробуйте позже.';
+            console.error('[API] Service Unavailable (503) - возможно, сервер перезапускается или перегружен');
             break;
           case 401:
             errorMessage = errorMessage || 'Unauthorized';

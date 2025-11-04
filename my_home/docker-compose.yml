@@ -12,8 +12,11 @@ services:
     ports:
       - 3000:3000
     volumes:
-      - ./data:/data
-      - ./data_src:/data_src
+      # Монтируем исходные файлы проекта в контейнер (для копирования при старте)
+      - .:/addons/my_addons/my_home:ro
+      # Монтируем data и data_src для работы приложения
+      - ./data:/my_home/data
+      - ./data_src:/my_home/data_src
     network_mode: host
     pid: host
     privileged: true

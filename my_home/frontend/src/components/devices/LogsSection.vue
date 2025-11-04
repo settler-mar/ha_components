@@ -26,7 +26,7 @@
               <v-icon size="16" class="me-2">mdi-file-document</v-icon>
               <span>{{ file.name }}</span>
               <v-chip size="x-small" variant="tonal" class="ms-2">
-                {{ formatFileSize(file.size) }}
+                {{ file.size }}
               </v-chip>
             </div>
             <div>
@@ -82,14 +82,6 @@ const emit = defineEmits([
   'view-log-file',
   'notification'
 ])
-
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
 </script>
 
 <style scoped>
@@ -101,6 +93,7 @@ const formatFileSize = (bytes) => {
   border-bottom: none;
 }
 </style>
+
 
 
 

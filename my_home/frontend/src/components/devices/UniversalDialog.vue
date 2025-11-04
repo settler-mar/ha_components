@@ -89,7 +89,7 @@ const parentField = computed(() => {
 })
 
 
-const excludeFields = ['id', 'params', 'created_at', 'created_by', 'updated_at', 'updated_by']
+const excludeFields = ['id', 'params', 'created_at', 'created_by', 'updated_at', 'updated_by', 'code', 'model', 'vendor', 'type']
 
 const onlyShowFields = ['created_at', 'created_by', 'updated_at', 'updated_by']
 

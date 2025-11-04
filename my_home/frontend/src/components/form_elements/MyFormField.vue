@@ -26,6 +26,7 @@
       v-else-if="isBoolean"
       v-model="model"
       :label="label"
+      :color="model ? 'primary' : 'grey'"
       hide-details
     />
 

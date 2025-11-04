@@ -17,7 +17,53 @@ connect_args = {}
 if config['db'].get('check_same_thread') is not None:
   connect_args['check_same_thread'] = config['db']['check_same_thread']
 
-engine = create_engine(config['db']['url'],
+# Извлекаем путь к базе данных из URL для проверки
+db_url = config['db']['url']
+logger.info(f"=== Creating Database Engine ===")
+logger.info(f"Database URL from config: {db_url}")
+logger.info(f"Config object id: {id(config._config)}")
+
+# Для SQLite проверяем и создаем файл базы данных, если его нет
+if db_url.startswith('sqlite'):
+  try:
+    # Извлекаем путь к файлу из URL
+    if db_url.startswith('sqlite:////'):
+      # Абсолютный путь (4 слэша)
+      db_file_path = db_url.replace('sqlite:////', '')
+    elif db_url.startswith('sqlite:///'):
+      # Относительный путь или Windows путь
+      db_file_path = db_url.replace('sqlite:///', '')
+    else:
+      db_file_path = None
+    
+    if db_file_path:
+      db_dir = os.path.dirname(db_file_path)
+      # Создаем директорию, если её нет
+      if db_dir and not os.path.exists(db_dir):
+        logger.info(f"Creating database directory: {db_dir}")
+        os.makedirs(db_dir, mode=0o755, exist_ok=True)
+      
+      # Проверяем доступность директории для записи
+      if db_dir and not os.access(db_dir, os.W_OK):
+        logger.error(f"Database directory {db_dir} is not writable!")
+        raise PermissionError(f"Cannot write to database directory: {db_dir}")
+      
+      logger.info(f"Database file path: {db_file_path}")
+      logger.info(f"Database file exists: {os.path.exists(db_file_path)}")
+      logger.info(f"Database directory: {db_dir}")
+      logger.info(f"Database directory exists: {os.path.exists(db_dir) if db_dir else 'N/A'}")
+      logger.info(f"Database directory writable: {os.access(db_dir, os.W_OK) if db_dir else 'N/A'}")
+      
+      # Проверяем, что файл будет создан в правильном месте
+      if db_dir and db_dir != '/data' and os.path.exists('/data'):
+        logger.warning(f"WARNING: Database directory is {db_dir}, but /data exists!")
+        logger.warning("Database should be created in /data in Home Assistant environment!")
+      logger.info(f"==============================")
+  except Exception as e:
+    logger.error(f"Error checking database path: {e}")
+    raise
+
+engine = create_engine(db_url,
                        echo=config['db']['echo'], echo_pool=config['db']['echo_pool'],
                        connect_args=connect_args)
 

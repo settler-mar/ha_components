@@ -4,6 +4,7 @@ API routes для управления логами и бэкапами
 import os
 import json
 import asyncio
+import aiohttp
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -92,7 +93,8 @@ def add_logs_backup_routes(app: APIRouter):
             from models.my_home import ConfigVersionManager
             import os
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             log_file = os.path.join(backup_root, 'backup.log')
             
             if not os.path.exists(log_file):
@@ -133,83 +135,165 @@ def add_logs_backup_routes(app: APIRouter):
     
     @app.get("/api/devices/{device_id}/logs/files", tags=["logs"])
     async def get_log_files(device_id: int):
-        """Получение списка физических файлов логов"""
+        """Получение списка физических файлов логов с устройства"""
         try:
-            import os
+            from utils.db_utils import db_session
+            from db_models.devices import Devices as DbDevices
             
-            logs_root = f"../store/backup/logs/{device_id}"
-            if not os.path.exists(logs_root):
-                return {"success": True, "files": []}
-            
-            files = []
-            for filename in os.listdir(logs_root):
-                if filename.endswith('.txt'):
-                    filepath = os.path.join(logs_root, filename)
-                    if os.path.isfile(filepath):
-                        size = os.path.getsize(filepath)
-                        modified = os.path.getmtime(filepath)
-                        files.append({
-                            "name": filename,
-                            "size": size,
-                            "modified": modified
-                        })
-            
-            # Сортируем по времени изменения (новые первыми)
-            files.sort(key=lambda x: x['modified'], reverse=True)
-            
-            return {"success": True, "files": files}
+            with db_session() as db:
+                device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+                if not device:
+                    return {"success": False, "error": "Device not found"}
+                
+                params = device.params if isinstance(device.params, dict) else {}
+                ip = params.get('ip')
+                if not ip:
+                    return {"success": False, "error": "Device IP not configured"}
+                
+                # Запрашиваем список файлов с устройства
+                url = f"http://{ip}/list?dir=/logs/"
+                
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                            if response.status != 200:
+                                error_text = await response.text()
+                                return {"success": False, "error": f"Device returned status {response.status}: {error_text[:200]}"}
+                            
+                            # Читаем текст ответа и парсим JSON вручную (устройство может вернуть text/json вместо application/json)
+                            response_text = await response.text()
+                            try:
+                                entries = json.loads(response_text)
+                            except json.JSONDecodeError as e:
+                                return {"success": False, "error": f"Invalid JSON response from device: {str(e)}, response: {response_text[:200]}"}
+                            
+                            # Фильтруем только файлы и преобразуем формат
+                            files = []
+                            for entry in entries:
+                                if entry.get("type") == "file":
+                                    filename = entry.get("name", "")
+                                    # Исключаем служебные файлы
+                                    if filename == "_.txt":
+                                        continue
+                                    files.append({
+                                        "name": filename,
+                                        "size": entry.get("size", "0B")
+                                    })
+                            
+                            # Сортируем по имени
+                            files.sort(key=lambda x: x['name'])
+                            
+                            return {"success": True, "files": files}
+                
+                except asyncio.TimeoutError:
+                    return {"success": False, "error": "Timeout connecting to device"}
+                except aiohttp.ClientConnectorError as e:
+                    return {"success": False, "error": f"Cannot connect to device: {str(e)}"}
+                except aiohttp.ClientError as e:
+                    return {"success": False, "error": f"Error connecting to device: {str(e)}"}
+                except Exception as e:
+                    return {"success": False, "error": f"Error parsing response: {str(e)}"}
             
         except Exception as e:
             return {"success": False, "error": str(e)}
     
     @app.get("/api/devices/{device_id}/logs/download/{filename}", tags=["logs"])
     async def download_log_file(device_id: int, filename: str):
-        """Скачивание файла логов"""
+        """Скачивание файла логов с устройства"""
         try:
-            import os
-            from fastapi.responses import FileResponse
+            from fastapi.responses import Response
+            from utils.db_utils import db_session
+            from db_models.devices import Devices as DbDevices
             
-            logs_root = f"../store/backup/logs/{device_id}"
-            filepath = os.path.join(logs_root, filename)
+            with db_session() as db:
+                device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+                if not device:
+                    raise HTTPException(status_code=404, detail="Device not found")
+                
+                params = device.params if isinstance(device.params, dict) else {}
+                ip = params.get('ip')
+                if not ip:
+                    raise HTTPException(status_code=400, detail="Device IP not configured")
+                
+                # Запрашиваем файл с устройства
+                url = f"http://{ip}/logs/{filename}"
+                
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                            if response.status != 200:
+                                error_text = await response.text()
+                                raise HTTPException(
+                                    status_code=response.status,
+                                    detail=f"Device returned status {response.status}: {error_text[:200]}"
+                                )
+                            
+                            content = await response.read()
+                            
+                            return Response(
+                                content=content,
+                                media_type='text/plain',
+                                headers={
+                                    "Content-Disposition": f'attachment; filename="{filename}"'
+                                }
+                            )
+                
+                except asyncio.TimeoutError:
+                    raise HTTPException(status_code=500, detail="Timeout connecting to device")
+                except aiohttp.ClientConnectorError as e:
+                    raise HTTPException(status_code=500, detail=f"Cannot connect to device: {str(e)}")
+                except aiohttp.ClientError as e:
+                    raise HTTPException(status_code=500, detail=f"Error connecting to device: {str(e)}")
             
-            if not os.path.exists(filepath) or not filename.endswith('.txt'):
-                raise HTTPException(status_code=404, detail="File not found")
-            
-            return FileResponse(
-                filepath,
-                media_type='text/plain',
-                filename=filename
-            )
-            
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/devices/{device_id}/logs/content/{filename}", tags=["logs"])
     async def get_log_file_content(device_id: int, filename: str):
-        """Получение содержимого файла логов"""
+        """Получение содержимого файла логов с устройства"""
         try:
-            import os
+            from utils.db_utils import db_session
+            from db_models.devices import Devices as DbDevices
             
-            logs_root = f"../store/backup/logs/{device_id}"
-            filepath = os.path.join(logs_root, filename)
-            
-            if not os.path.exists(filepath) or not filename.endswith('.txt'):
-                raise HTTPException(status_code=404, detail="File not found")
-            
-            # Читаем файл с ограничением размера (для больших файлов)
-            max_size = 1024 * 1024  # 1MB
-            file_size = os.path.getsize(filepath)
-            
-            with open(filepath, 'r', encoding='utf-8') as f:
-                if file_size > max_size:
-                    # Читаем только последние строки для больших файлов
-                    f.seek(max(0, file_size - max_size))
-                    content = f.read()
-                    content = "...(файл обрезан)...\n" + content
-                else:
-                    content = f.read()
-            
-            return {"success": True, "content": content}
+            with db_session() as db:
+                device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+                if not device:
+                    return {"success": False, "error": "Device not found"}
+                
+                params = device.params if isinstance(device.params, dict) else {}
+                ip = params.get('ip')
+                if not ip:
+                    return {"success": False, "error": "Device IP not configured"}
+                
+                # Запрашиваем файл с устройства
+                url = f"http://{ip}/logs/{filename}"
+                
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                            if response.status != 200:
+                                error_text = await response.text()
+                                return {"success": False, "error": f"Device returned status {response.status}: {error_text[:200]}"}
+                            
+                            # Читаем содержимое файла
+                            content = await response.text()
+                            
+                            # Ограничиваем размер для больших файлов (1MB)
+                            max_size = 1024 * 1024
+                            if len(content) > max_size:
+                                # Берем последнюю часть файла
+                                content = "...(файл обрезан, показываются последние 1MB)...\n" + content[-max_size:]
+                            
+                            return {"success": True, "content": content}
+                
+                except asyncio.TimeoutError:
+                    return {"success": False, "error": "Timeout connecting to device"}
+                except aiohttp.ClientConnectorError as e:
+                    return {"success": False, "error": f"Cannot connect to device: {str(e)}"}
+                except aiohttp.ClientError as e:
+                    return {"success": False, "error": f"Error connecting to device: {str(e)}"}
             
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -221,7 +305,8 @@ def add_logs_backup_routes(app: APIRouter):
             import os
             from fastapi.responses import FileResponse
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             filepath = os.path.join(backup_root, 'backup.log')
             
             if not os.path.exists(filepath):
@@ -242,7 +327,8 @@ def add_logs_backup_routes(app: APIRouter):
         try:
             import os
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             filepath = os.path.join(backup_root, 'backup.log')
             
             if not os.path.exists(filepath):
@@ -266,7 +352,8 @@ def add_logs_backup_routes(app: APIRouter):
         try:
             import os
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             if not os.path.exists(backup_root):
                 return {"success": True, "files": []}
             
@@ -308,7 +395,8 @@ def add_logs_backup_routes(app: APIRouter):
         try:
             import os
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             if not os.path.exists(backup_root):
                 return {"success": True, "versions": []}
             
@@ -343,7 +431,8 @@ def add_logs_backup_routes(app: APIRouter):
         try:
             import os
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             if not os.path.exists(backup_root):
                 return {"success": False, "error": "Backup directory not found"}
             
@@ -378,7 +467,8 @@ def add_logs_backup_routes(app: APIRouter):
         try:
             import os
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             filepath = os.path.join(backup_root, timestamp, filename)
             
             if not os.path.exists(filepath):
@@ -399,7 +489,8 @@ def add_logs_backup_routes(app: APIRouter):
             import os
             from fastapi.responses import FileResponse
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             if not os.path.exists(backup_root):
                 raise HTTPException(status_code=404, detail="Backup directory not found")
             
@@ -436,7 +527,8 @@ def add_logs_backup_routes(app: APIRouter):
             import os
             from fastapi.responses import FileResponse
             
-            backup_root = f"../data/backup/{device_id}"
+            from utils.configs import get_data_dir
+            backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
             filepath = os.path.join(backup_root, timestamp, filename)
             
             if not os.path.exists(filepath):
@@ -495,7 +587,8 @@ def add_logs_backup_routes(app: APIRouter):
                         }
                 
                 # Получаем информацию о локальных файлах логов
-                logs_root = f"../store/backup/logs"
+                from utils.configs import get_data_dir
+                logs_root = os.path.join(get_data_dir(), "store", "backup", "logs")
                 local_logs_info = None
                 if os.path.exists(logs_root):
                     try:
@@ -590,7 +683,8 @@ def add_logs_backup_routes(app: APIRouter):
             # Здесь мы показываем информацию о конфигурационных бэкапах устройств
             
             device_backups = []
-            backup_base = "../data/backup"
+            from utils.configs import get_data_dir
+            backup_base = os.path.join(get_data_dir(), "backup")
             
             if os.path.exists(backup_base):
                 try:
@@ -667,7 +761,8 @@ def add_logs_backup_routes(app: APIRouter):
                     raise HTTPException(status_code=404, detail="Device not found")
                 
                 # Получаем информацию о бэкапах конфигурации устройства
-                backup_root = f"../data/backup/{device_id}"
+                from utils.configs import get_data_dir
+                backup_root = os.path.join(get_data_dir(), "backup", str(device_id))
                 backups_info = []
                 
                 if os.path.exists(backup_root):
