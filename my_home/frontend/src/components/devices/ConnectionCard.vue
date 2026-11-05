@@ -12,7 +12,7 @@
       </v-btn>
 
       <ActionHandler
-        :actions="actions"
+        :actions="actions.filter(action => action.id !== 'ha-config')"
         :haConfigMode="haConfigMode"
         :haChangesCount="totalHAChangesCount"
         :hasHAChanges="hasHAChanges"
@@ -40,6 +40,7 @@
             :custom-params="devicesParams"
             @toggle-ha-config="toggleHAConfig"
             @device-updated="handleDeviceUpdate"
+            @deleted="handleDeviceDeleted"
           />
         </v-col>
         <v-col
@@ -275,8 +276,12 @@ function refresh() {
   emit('refresh')
 }
 
+function handleDeviceDeleted() {
+  emit('refresh')
+}
+
 function toggleHAConfig() {
-  haConfigMode.value = !haConfigMode.value
+  // Старый HA selection flow is intentionally disabled. VirtualBoardSelector is the only path.
 }
 
 function handleDeviceUpdate(updatedDevice) {

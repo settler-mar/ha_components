@@ -235,4 +235,4 @@ function secureFetch(url, {
 //   .then(json => console.log(json))
 //   .catch(error => console.log(error));
 
-export {secureFetch};
+export {secureFetch, getApiUrl};

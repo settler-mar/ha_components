@@ -279,3 +279,46 @@ config.local.yml
 .cache/
 .local/
 .yarn/
+
+# Deployment configuration
+deploy.conf
+
+# ============================================
+# Local application runtime
+# ============================================
+# Home Assistant / add-on state must stay on the target host.
+my_home/data/
+my_home/ha_config/.storage/
+my_home/ha_config/*.db
+my_home/ha_config/*.db-*
+my_home/ha_config/*.log
+my_home/ha_config/*.log.*
+my_home/ha_config/.ha_run.lock
+my_home/ha_config/.HA_VERSION
+my_home/ha_config/secrets.yaml
+
+# Local credentials and generated integration state
+my_home/data_src/*
+!my_home/data_src/.gitkeep
+my_home/data/**/google_token.json
+my_home/data/**/google_credentials.json
+my_home/data/**/credentials*.json
+
+# Frontend dependencies and generated output
+my_home/frontend/node_modules/
+my_home/frontend/dist/
+my_home/frontend/public/
+
+# Local archives and editor metadata
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Keep package manager lock files out of this repository unless explicitly adopted.
+my_home/frontend/package-lock.json
+my_home/frontend/yarn.lock
+
+# Backend archives
+backend/backend_*.zip
+my_home/backend/backend_*.zip

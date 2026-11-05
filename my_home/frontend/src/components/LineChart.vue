@@ -38,6 +38,7 @@ const props = defineProps<{
   showPoints?: boolean
   lineWidth?: number
   axisSwap?: boolean // true => X <-> Y
+  stacked?: boolean
 }>()
 
 const chartTypeComponent = computed(() => {
@@ -102,8 +103,8 @@ const chartOptions = computed(() => {
     },
     indexAxis: 'x',
     scales: {
-      x: {beginAtZero: true},
-      y: {beginAtZero: true}
+      x: {beginAtZero: true, stacked: props.stacked === true},
+      y: {beginAtZero: true, stacked: props.stacked === true}
     }
   }
   return base

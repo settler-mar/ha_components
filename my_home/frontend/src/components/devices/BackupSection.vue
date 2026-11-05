@@ -32,6 +32,7 @@
           @refresh="$emit('refresh-history')"
           @download="$emit('download-backup-log')"
           @view="$emit('view-backup-log')"
+          @delete-backup="$emit('delete-backup', $event)"
           @view-config-file="$emit('view-config-file', $event)"
           @download-config-file="$emit('download-config-file', $event)"
           @notification="$emit('notification', $event)"
@@ -94,6 +95,7 @@ const emit = defineEmits([
   'refresh-history',
   'download-backup-log',
   'view-backup-log',
+  'delete-backup',
   'view-config-file',
   'download-config-file',
   'notification'

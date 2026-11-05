@@ -25,7 +25,7 @@ ingress_port: 3000
 panel_icon: mdi:chip
 panel_title: "My Devices"
 
-init: true
+init: false
 hassio_api: true
 homeassistant_api: true
 auth_api: true

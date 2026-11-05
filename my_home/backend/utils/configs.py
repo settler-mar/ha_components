@@ -366,6 +366,21 @@ ADDON_CONFIG_SCHEMA = {
                 "default": False,
                 "required": True
             },
+            "log_module_VirtualPorts_level": {
+                "type": "select",
+                "name": "VirtualPorts: Уровень",
+                "description": "Уровень логирования для модуля VirtualPorts",
+                "default": "INFO",
+                "required": True,
+                "options": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            },
+            "log_module_VirtualPorts_enabled": {
+                "type": "bool",
+                "name": "VirtualPorts: Включен",
+                "description": "Включает логирование для модуля VirtualPorts",
+                "default": False,
+                "required": True
+            },
             "log_module_GoogleConnector_level": {
                 "type": "select",
                 "name": "GoogleConnector: Уровень",
@@ -668,7 +683,7 @@ class AppConfig:
       'retry_attempts': 3,
       'log_requests': True,
       'log_responses': False,
-      'auto_sync': True,
+      'auto_sync': False,
       'published_ports': {},
       'port_entities': {},
       'entity_ports': {}
@@ -732,6 +747,11 @@ class AppConfig:
     self._config_path = config_path
     self._config = self._load_yaml()
     self._config.update(self._load_json())
+    # Настройки аддона из Home Assistant хранятся отдельно в options.json.
+    # Загружаем их в общий конфиг, чтобы UI и фоновые сервисы использовали
+    # одинаковые значения после перезапуска.
+    self._config.update(self._load_options())
+    self._normalize_ha_config()
     
     # ВАЖНО: Устанавливаем правильный URL базы данных ДО _test_config
     # чтобы избежать перезаписи из default_config
@@ -765,6 +785,54 @@ class AppConfig:
         return json.load(file) or {}
     except (FileNotFoundError, json.JSONDecodeError):
       return {}
+
+  def _load_options(self) -> dict:
+    try:
+      with open(get_options_path(), 'r') as file:
+        return json.load(file) or {}
+    except (FileNotFoundError, json.JSONDecodeError):
+      return {}
+
+  def _normalize_ha_config(self) -> None:
+    """Repair legacy/malformed YAML without losing valid HA settings."""
+    ha = self._config.get('homeassistant')
+    if not isinstance(ha, dict):
+      ha = {}
+      self._config['homeassistant'] = ha
+
+    for nested_key in ('published_ports', 'port_entities', 'entity_ports'):
+      nested = ha.get(nested_key)
+      if not isinstance(nested, dict):
+        continue
+      for key in ('url', 'token', 'timeout', 'retry_attempts',
+                  'log_requests', 'log_responses', 'auto_sync'):
+        if key not in ha and key in nested:
+          ha[key] = nested[key]
+      for key in ('db', 'gsheet', 'local_networks', 'scan_timeout', 'is_fast_scan'):
+        if key not in self._config and key in nested:
+          self._config[key] = nested[key]
+
+    for key, default in self.default_config['homeassistant'].items():
+      if key not in ha or not isinstance(ha[key], type(default)):
+        ha[key] = default.copy() if isinstance(default, dict) else default
+        self._need_save = True
+
+    for key in ('published_ports', 'port_entities', 'entity_ports'):
+      if not isinstance(ha.get(key), dict):
+        ha[key] = {}
+        self._need_save = True
+    ha['published_ports'] = {
+      str(device_id): ports for device_id, ports in ha['published_ports'].items()
+      if str(device_id).isdigit() and isinstance(ports, list)
+    }
+    ha['port_entities'] = {
+      str(key): str(value) for key, value in ha['port_entities'].items()
+      if isinstance(key, str) and ':' in key and isinstance(value, str)
+    }
+    ha['entity_ports'] = {
+      str(key): str(value) for key, value in ha['entity_ports'].items()
+      if isinstance(key, str) and isinstance(value, str) and ':' in value
+    }
 
   def _test_config(self, root_config: dict = None, root_default: dict = None, visited: set = None) -> None:
     root_config = root_config or self._config
@@ -935,6 +1003,27 @@ class AppConfig:
     device_key = str(device_id)
     return self._config['homeassistant']['published_ports'].get(device_key, [])
 
+  async def prune_published_ports(self, device_id: int, valid_codes: set[str]) -> int:
+    """Remove HA mappings that are no longer present in the device /values."""
+    device_key = str(device_id)
+    published = self._config['homeassistant']['published_ports'].get(device_key, [])
+    stale = [code for code in published if code not in valid_codes]
+    if not stale:
+      return 0
+    self._config['homeassistant']['published_ports'][device_key] = [
+      code for code in published if code in valid_codes
+    ]
+    for code in stale:
+      port_key = f"{device_id}:{code}"
+      entity_id = self._config['homeassistant']['port_entities'].pop(port_key, None)
+      if entity_id:
+        self._config['homeassistant']['entity_ports'].pop(entity_id, None)
+    if not self._config['homeassistant']['published_ports'][device_key]:
+      self._config['homeassistant']['published_ports'].pop(device_key, None)
+    self.save_yaml()
+    logger.info(f"Pruned {len(stale)} stale HA mappings for device {device_id}")
+    return len(stale)
+
   async def get_entity_id(self, device_id: int, port_code: str) -> str:
     """Получает entity_id для порта"""
     port_key = f"{device_id}:{port_code}"
@@ -986,16 +1075,14 @@ class AppConfig:
     """Отправляет команду на устройство"""
     try:
       from models.my_home import MyHomeClass
+      from utils.command_dispatcher import DeviceCommandDispatcher
+      from utils.state_model import DeviceCommand
 
       my_home = MyHomeClass()
       client = my_home.get_client(device_id)
 
       if not client:
         print(f"[AppConfig-HA] Device {device_id} client not found")
-        return
-
-      if not hasattr(client, '_current_ws') or not client._current_ws:
-        print(f"[AppConfig-HA] Device {device_id} WebSocket not connected")
         return
 
       # Определяем значение для отправки на устройство
@@ -1006,13 +1093,13 @@ class AppConfig:
       else:
         value = str(state)
 
-      # Формируем команду в формате ESP: "code#value"
-      command = f"{port_code}#{value}"
-
-      # Отправляем команду через WebSocket устройства
-      await client._current_ws.send_str(command)
-
-      print(f"[AppConfig-HA] Sent command to device {device_id}: {command}")
+      result = await DeviceCommandDispatcher(my_home.get_client).dispatch(DeviceCommand(
+        device_id=device_id,
+        code=port_code,
+        value=value,
+        source="home_assistant_legacy",
+      ))
+      print(f"[AppConfig-HA] Command result for {device_id}:{port_code}: {result}")
 
     except Exception as e:
       print(f"[AppConfig-HA] Error sending device command: {e}")
@@ -1091,7 +1178,7 @@ class AppConfig:
       'retry_attempts': 3,
       'log_requests': True,
       'log_responses': False,
-      'auto_sync': True,
+      'auto_sync': False,
       'published_ports': {},
       'port_entities': {},
       'entity_ports': {}
@@ -1140,7 +1227,7 @@ class AppConfig:
 
   def is_auto_sync_enabled(self) -> bool:
     """Проверяет, включена ли автосинхронизация"""
-    return self._config['homeassistant'].get('auto_sync', True)
+    return self._config['homeassistant'].get('auto_sync', False)
 
   def set_auto_sync(self, enabled: bool):
     """Включает/выключает автосинхронизацию"""

@@ -314,6 +314,14 @@ def add_addon_config_routes(app: APIRouter):
                 json.dump(addon_options, f, indent=2, ensure_ascii=False)
             
             logger.info(f"Addon options saved to {options_path}")
+
+            # Применяем обычные настройки сразу, без перезапуска процесса.
+            # Сканер устройств использует этот же объект конфигурации.
+            config._config.update(addon_options)
+            if 'local_network' in addon_options:
+                # Совместимость со старым ключом, который использовали
+                # предыдущие версии сканера.
+                config._config['local_networks'] = addon_options['local_network']
             
             # Сохраняем параметры HA в config.yaml
             if ha_options:
@@ -1405,4 +1413,3 @@ def add_addon_config_routes(app: APIRouter):
             </html>
             """
             return HTMLResponse(content=error_html, status_code=500)
-

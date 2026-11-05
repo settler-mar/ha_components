@@ -24,6 +24,16 @@
           <div class="event-header d-flex align-center mb-2">
             <v-icon size="16" color="primary" class="me-2">mdi-clock</v-icon>
             <span class="text-body-1 font-weight-medium">{{ formatTimestamp(entry.timestamp) }}</span>
+            <v-spacer></v-spacer>
+            <v-btn
+              size="x-small"
+              variant="outlined"
+              color="error"
+              title="Удалить бэкап"
+              @click="deleteBackup(entry.timestamp)"
+            >
+              <v-icon size="12">mdi-delete</v-icon>
+            </v-btn>
           </div>
           
           <!-- Список файлов с кнопками -->
@@ -75,16 +85,21 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['refresh', 'download', 'view', 'view-config-file', 'download-config-file'])
+const emit = defineEmits(['refresh', 'download', 'view', 'delete-backup', 'view-config-file', 'download-config-file'])
 
 // Сортируем историю - новые записи сверху
 const sortedBackupHistory = computed(() => {
   return [...props.backupHistory].sort((a, b) => {
-    const dateA = new Date(a.timestamp)
-    const dateB = new Date(b.timestamp)
+    const dateA = parseBackupTimestamp(a.timestamp)
+    const dateB = parseBackupTimestamp(b.timestamp)
     return dateB - dateA // Убывающий порядок (новые сверху)
   })
 })
+
+const parseBackupTimestamp = (timestamp) => {
+  const parsed = new Date(String(timestamp || '').replace('_', 'T'))
+  return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed
+}
 
 // Форматирование временной метки
 const formatTimestamp = (timestamp) => {
@@ -121,6 +136,10 @@ const viewConfigFile = (filename, timestamp) => {
 
 const downloadConfigFile = (filename, timestamp) => {
   emit('download-config-file', { filename, timestamp })
+}
+
+const deleteBackup = (timestamp) => {
+  emit('delete-backup', timestamp)
 }
 </script>
 
@@ -168,6 +187,7 @@ const downloadConfigFile = (filename, timestamp) => {
   background-color: #f5f5f5;
 }
 </style>
+
 
 
 

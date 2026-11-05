@@ -8,7 +8,7 @@
     "MyHome": {
       "level": "INFO",
       "colors": true,
-      "enabled": false
+      "enabled": true
     },
     "Database": {
       "level": "WARNING",

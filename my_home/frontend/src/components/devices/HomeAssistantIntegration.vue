@@ -61,9 +61,65 @@
         Данные передаются при изменении в реальном времени.
       </v-alert>
 
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="d-flex align-center">
+          <v-icon class="me-2">mdi-source-branch</v-icon>
+          Виртуальное представление платы
+          <v-spacer />
+          <v-btn size="small" variant="outlined" prepend-icon="mdi-refresh" @click="loadVirtualOverview">Обновить</v-btn>
+        </v-card-title>
+        <v-card-text>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+            Физические параметры не публикуются в HA напрямую. Сначала создайте виртуальное устройство или добавьте параметры в существующее.
+          </v-alert>
+          <v-row>
+            <v-col cols="12" md="3"><v-select v-model="virtualDraft.source_type" :items="[{title:'Порт',value:'port'},{title:'Группа',value:'group'},{title:'Плата целиком',value:'board'}]" item-title="title" item-value="value" label="Источник" density="compact" /></v-col>
+            <v-col v-if="virtualDraft.source_type === 'group'" cols="12" md="3"><v-select v-model="virtualDraft.group_title" :items="virtualGroups" label="Группа платы" density="compact" /></v-col>
+            <v-col cols="12" md="3"><v-text-field v-model="virtualDraft.name" label="Имя виртуального устройства" density="compact" /></v-col>
+            <v-col cols="12" md="3"><TagsInput v-model="virtualDraft.tags" /></v-col>
+            <v-col cols="12" md="3"><v-select v-model="virtualDraft.target_virtual_device_id" :items="virtualDevices" item-title="name" item-value="id" label="Добавить в существующее" clearable density="compact" /></v-col>
+          </v-row>
+          <v-text-field v-model="virtualDraft.filter" label="Фильтр параметров" prepend-inner-icon="mdi-magnify" clearable density="compact" />
+          <v-select v-if="virtualDraft.source_type === 'port'" v-model="virtualDraft.selected_codes" :items="filteredVirtualPhysicalPorts" item-title="label" item-value="code" label="Что перенести в виртуальное устройство" multiple chips density="compact" />
+          <v-list v-if="virtualOverview.length" density="compact" class="mb-2">
+            <v-list-item v-for="item in virtualOverview" :key="item.code">
+              <v-list-item-title>{{ item.title || item.code }}</v-list-item-title>
+              <template #append>
+                <v-chip size="x-small" :color="item.virtual_status === 'used' ? 'success' : 'grey'">{{ item.virtual_status === 'used' ? 'В виртуальной модели' : 'Не используется' }}</v-chip>
+              </template>
+            </v-list-item>
+          </v-list>
+          <div class="d-flex align-center">
+            <v-btn color="primary" size="small" prepend-icon="mdi-eye" @click="createVirtualDraft">Сформировать preview</v-btn>
+            <v-chip v-if="virtualDiff" class="ms-3" size="small" color="warning">Изменений: {{ virtualDiff.ports_to_add?.length || 0 }}</v-chip>
+            <v-spacer />
+            <v-btn v-if="virtualDraftData" size="small" variant="outlined" class="me-2" @click="applyVirtualDraft">Применить в виртуальную модель</v-btn>
+            <v-btn v-if="virtualDraftData" size="small" color="success" @click="publishVirtualDraft">Применить и опубликовать в HA</v-btn>
+          </div>
+          <v-divider class="my-3" />
+          <div class="text-caption text-grey">Последние операции</div>
+          <div v-for="entry in virtualHistory" :key="`${entry.at}-${entry.action}`" class="text-caption">{{ formatTime(entry.at) }} — {{ entry.action }}</div>
+        </v-card-text>
+      </v-card>
+
+      <v-dialog v-model="virtualConfigDialog" max-width="760" scrollable>
+        <v-card>
+          <v-card-title>Конфигурация виртуального представления</v-card-title>
+          <v-card-text>
+            <v-alert type="warning" variant="tonal" class="mb-3">Это предварительный просмотр. Home Assistant ещё не изменён.</v-alert>
+            <div v-if="virtualDraftData"><b>Устройство:</b> {{ virtualDraftData.target?.name }}</div>
+            <div class="mt-2"><b>Портов:</b> {{ virtualDraftData?.ports?.length || 0 }}</div>
+            <v-list density="compact"><v-list-item v-for="port in virtualDraftData?.ports || []" :key="port.physical_code"><v-list-item-title>{{ port.name }} → {{ port.physical_code }}</v-list-item-title><v-list-item-subtitle>{{ port.type }} · {{ port.unit_of_measurement || 'без единицы' }}</v-list-item-subtitle></v-list-item></v-list>
+            <v-divider class="my-2" />
+            <div v-if="virtualDiff"><b>Изменения:</b> добавится портов — {{ virtualDiff.ports_to_add?.length || 0 }}, уже существует — {{ virtualDiff.ports_existing?.length || 0 }}</div>
+          </v-card-text>
+          <v-card-actions><v-spacer /><v-btn variant="text" @click="virtualConfigDialog = false">Отмена</v-btn><v-btn color="primary" @click="applyVirtualDraft">Применить в модель</v-btn><v-btn color="success" @click="publishVirtualDraft">Опубликовать в HA</v-btn></v-card-actions>
+        </v-card>
+      </v-dialog>
+
       <!-- Режим настройки интеграции -->
       <v-expansion-panels v-model="expandedPanels" multiple>
-        <v-expansion-panel value="settings">
+        <v-expansion-panel v-if="false" value="settings">
           <v-expansion-panel-title>
             <v-icon class="me-2">mdi-cog</v-icon>
             Настройки интеграции
@@ -402,6 +458,7 @@
 import {ref, computed, onMounted, watch} from 'vue'
 import {secureFetch} from '@/services/fetch'
 import PortConfigDialog from './PortConfigDialog.vue'
+import TagsInput from '@/components/form_elements/TagsInput.vue'
 
 const props = defineProps({
   device: {
@@ -427,6 +484,24 @@ const expandedPanels = ref(['settings'])
 const showChangesDialog = ref(false)
 const showPortConfigDialog = ref(false)
 const selectedPort = ref(null)
+const virtualOverview = ref([])
+const virtualDevices = ref([])
+const virtualHistory = ref([])
+const virtualDraftData = ref(null)
+const virtualDiff = ref(null)
+const virtualConfigDialog = ref(false)
+const virtualDraft = ref({ source_type: 'port', group_title: null, selected_codes: [], name: '', tags: [], filter: '', target_virtual_device_id: null })
+
+const virtualGroups = computed(() => [...new Set(virtualOverview.value.map(item => item.group_title).filter(Boolean))])
+const virtualPhysicalPorts = computed(() => virtualOverview.value.map(item => ({
+  code: item.code,
+  label: `${item.title || item.code} · ${item.code} · ${item.online ? 'online' : 'offline'}`
+})))
+const filteredVirtualPhysicalPorts = computed(() => {
+  const query = String(virtualDraft.value.filter || '').toLowerCase()
+  if (!query) return virtualPhysicalPorts.value
+  return virtualPhysicalPorts.value.filter(item => item.label.toLowerCase().includes(query) || item.code.toLowerCase().includes(query))
+})
 
 // Настройки
 const settings = ref({
@@ -813,6 +888,46 @@ async function loadEntities() {
   }
 }
 
+async function loadVirtualOverview() {
+  try {
+    const response = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-overview`)
+    const data = await response.json()
+    virtualOverview.value = data.physical_ports || []
+    virtualDevices.value = data.virtual_devices || []
+    virtualHistory.value = data.history || []
+  } catch (error) {
+    virtualOverview.value = []
+  }
+}
+
+async function createVirtualDraft() {
+  const payload = {
+    ...virtualDraft.value,
+    tags: (virtualDraft.value.tags || []).map(item => String(item).trim().replace(/^#+/, '')).filter(Boolean)
+  }
+  const response = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft`, { method: 'POST', data: payload })
+  const data = await response.json()
+  virtualDraftData.value = data.draft
+  const preview = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/preview`, { method: 'POST', data: { draft: data.draft } })
+  const previewData = await preview.json()
+  virtualDiff.value = previewData.diff
+  virtualConfigDialog.value = true
+}
+
+async function applyVirtualDraft() {
+  if (!virtualDraftData.value || !window.confirm('Применить черновик в виртуальную модель?')) return
+  await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/apply`, { method: 'POST', data: { draft: virtualDraftData.value, confirmed: true } })
+  virtualDraftData.value = null; virtualDiff.value = null; await loadVirtualOverview()
+  virtualConfigDialog.value = false
+}
+
+async function publishVirtualDraft() {
+  if (!virtualDraftData.value || !window.confirm('Создать виртуальную модель и опубликовать её в Home Assistant?')) return
+  await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/publish`, { method: 'POST', data: { draft: virtualDraftData.value, confirmed: true } })
+  virtualDraftData.value = null; virtualDiff.value = null; await loadVirtualOverview()
+  virtualConfigDialog.value = false
+}
+
 async function syncStates() {
   syncLoading.value = true
   try {
@@ -853,6 +968,15 @@ function viewEntity(entity) {
 function processPortsData() {
   const groups = {}
 
+  const getRootGroup = (item) => {
+    const code = String(item.code || '').toLowerCase()
+    const title = String(item.title || '').toLowerCase()
+    if (['millis', 'network_priority'].includes(code) || code.startsWith('status.')) return 'System'
+    if (code.startsWith('floor_heating.') || title.includes('отоплен') || title.includes('котёл')) return 'Floor Heating'
+    if (code.startsWith('boiler_ctrl.') || code.startsWith('boiler_transport.')) return 'Boiler'
+    return 'Основные'
+  }
+
   props.ports.forEach(item => {
     if (item.data && Array.isArray(item.data)) {
       // Это группа с подгруппами
@@ -869,7 +993,7 @@ function processPortsData() {
       }
     } else {
       // Это отдельный элемент
-      const groupKey = 'Основные'
+      const groupKey = getRootGroup(item)
       if (!groups[groupKey]) {
         groups[groupKey] = {
           title: groupKey,
@@ -923,6 +1047,7 @@ watch(() => props.device, () => {
 onMounted(async () => {
   await loadSettings()
   await testConnection()
+  await loadVirtualOverview()
   if (integrationEnabled.value) {
     await loadEntities()
   }

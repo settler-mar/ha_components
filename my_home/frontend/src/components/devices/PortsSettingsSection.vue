@@ -1,18 +1,13 @@
 <template>
   <div class="ports-settings-section">
     <!-- Заголовок -->
-    <div class="section-header mb-4">
-      <h3 class="text-h6 mb-2">
-        <v-icon class="me-2">mdi-cog</v-icon>
-        Настройка портов устройства
-      </h3>
-      <p class="text-body-2 text-grey">
-        Управление параметрами портов, публикацией в Home Assistant и настройками логирования
-      </p>
+    <div class="section-header d-flex align-center mb-2">
+      <v-icon size="20" class="me-2" color="primary">mdi-tune</v-icon>
+      <span class="text-subtitle-1">Параметры портов</span>
     </div>
 
     <!-- Единая вкладка настроек портов -->
-    <UnifiedPortsTab 
+    <UnifiedPortsTab
       :device-id="deviceId"
       :device-data="deviceData"
       :ports-data="portsData"
@@ -59,20 +54,11 @@ const emit = defineEmits([
 
 <style scoped>
 .ports-settings-section {
-  padding: 16px 0;
+  padding: 4px 0;
 }
 
 .section-header {
   border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 16px;
-}
-
-.section-header h3 {
-  color: #1976d2;
-  font-weight: 500;
-}
-
-.section-header p {
-  margin: 0;
+  padding-bottom: 6px;
 }
 </style>

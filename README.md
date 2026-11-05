@@ -35,22 +35,24 @@ MY_HOME - это комплексная система управления ус
 
 ```
 home_assiastent_addons/
-├── my_home/                          # Основная директория проекта
+├── docs/                             # Контракты, требования и планы работ
+│   ├── contracts/                    # Контракты интеграций и данных
+│   ├── planning/                     # Планирование разработки
+│   └── requirements/                # Требования к функциям
+├── my_home/                          # Корень Home Assistant add-on
 │   ├── backend/                      # Backend приложение
 │   │   ├── db_models/               # Модели базы данных
-│   │   ├── models/                  # Бизнес-логика
+│   │   ├── models/                  # API-маршруты и бизнес-логика
+│   │   ├── tests/                   # Backend-тесты
 │   │   ├── utils/                   # Утилиты и вспомогательные функции
-│   │   └── websrv.py               # Основной веб-сервер
+│   │   └── websrv.py                # Основной веб-сервер
 │   ├── frontend/                    # Frontend приложение
-│   │   ├── src/                    # Исходный код Vue.js
-│   │   │   ├── components/         # Vue компоненты
-│   │   │   ├── pages/             # Страницы приложения
-│   │   │   ├── services/          # API сервисы
-│   │   │   └── store/             # Pinia хранилища
-│   │   └── public/                # Статические файлы
-│   ├── config.yaml                 # Конфигурация проекта
+│   │   └── src/                    # Исходный код Vue.js
+│   ├── ha_config/                   # Версионируемая YAML-конфигурация HA
+│   ├── config.yaml                  # Manifest add-on
 │   ├── docker-compose.yml          # Docker Compose конфигурация
 │   └── Dockerfile                  # Docker образ
+├── deploy.sh                        # Деплой на Home Assistant по SSH
 ├── .gitignore                      # Git ignore файл
 └── README.md                       # Документация проекта
 ```
@@ -106,7 +108,7 @@ map:
 
 Для уменьшения размера бэкапа с ~600МБ до ~2МБ (исключение Docker образа) в `config.yaml` добавлен параметр `map`, который указывает Home Assistant включать в бэкап только папки данных.
 
-Подробные инструкции по настройке бэкапа см. в файле `my_home/BACKUP_SETUP.md`.
+Runtime-данные, базы, логи, токены и секреты не хранятся в репозитории и создаются на целевом Home Assistant.
 
 ## API Endpoints
 

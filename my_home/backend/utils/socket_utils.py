@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 from utils.logs import log_print
 from utils.logger import api_logger as logger
+from utils.diagnostics import diagnostics
 import threading
 
 
@@ -147,6 +148,11 @@ class ConnectionManager:
         logger.info(log_message)
     
     self.logs_queue.append((data, permission))
+    if log_level in {"warning", "error", "critical"}:
+      diagnostics.record(
+        "system_log", log_message, device_id=device_id,
+        level=log_level, details={"class_name": class_name, "action": action},
+      )
 
 
 connection_manager = ConnectionManager()

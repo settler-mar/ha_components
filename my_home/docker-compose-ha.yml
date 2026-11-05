@@ -1,0 +1,30 @@
+version: "3.6"
+services:
+  homeassistant:
+    container_name: homeassistant
+    restart: always
+    environment:
+      - TZ=Europe/Kiev
+    image: "ghcr.io/home-assistant/home-assistant:stable"
+    volumes:
+      # Конфигурационная директория Home Assistant
+      - ./ha_config:/config
+      # Монтирование устройств (опционально, для работы с USB устройствами)
+      - /dev:/dev
+    ports:
+      - "8123:8123"
+#    network_mode: host
+    privileged: true
+#    devices:
+#      # Доступ к USB устройствам (опционально)
+#      - /dev/ttyUSB0:/dev/ttyUSB0
+#      - /dev/ttyACM0:/dev/ttyACM0
+    networks:
+      - cedalo-platform
+
+networks:
+  cedalo-platform:
+    name: cedalo-platform
+    driver: bridge
+
+

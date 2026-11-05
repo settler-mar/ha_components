@@ -48,6 +48,36 @@
         >
           HA: {{ publishedPortsCount }}
         </v-chip>
+
+        <v-icon
+          v-if="allFavorite"
+          icon="mdi-star"
+          size="16"
+          color="amber"
+          class="ms-1"
+          title="Все порты в избранном"
+        ></v-icon>
+
+        <v-icon
+          v-if="allVirtualLinked"
+          icon="mdi-link-variant"
+          size="16"
+          color="purple"
+          class="ms-1"
+          title="Все порты связаны с виртуальными"
+        ></v-icon>
+
+        <v-spacer></v-spacer>
+
+        <v-btn
+          :icon="favoritesFilter ? 'mdi-star' : 'mdi-star-outline'"
+          :color="favoritesFilter ? 'amber' : undefined"
+          size="x-small"
+          variant="text"
+          density="compact"
+          title="Показывать только избранное"
+          @click.stop="$emit('favorites-filter')"
+        ></v-btn>
       </div>
     </div>
 
@@ -66,9 +96,12 @@
               :show-update-indicator="getPortUpdateStatus(port)"
               :current-status="getPortCurrentStatus(port)"
               :has-pending-changes="hasPortChanges(port.code)"
+              :is-favorite="favoriteCodes.has(port.code)"
+              :is-virtual-linked="isVirtualLinked(port)"
               @update="handlePortUpdate"
               @edit="handlePortEdit"
               @ha-toggle="handlePortHAToggle"
+              @favorite-toggle="$emit('favorite-toggle', port)"
             />
           </tbody>
         </v-table>
@@ -162,9 +195,19 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  favoriteCodes: {
+    type: Set,
+    default: () => new Set()
+  },
+  favoritesFilter: {
+    type: Boolean,
+    default: false
+  },
 })
 
-const emit = defineEmits(['update', 'edit'])
+const emit = defineEmits(['update', 'edit', 'favorite-toggle', 'favorites-filter'])
+
+const isVirtualLinked = (port) => Array.isArray(port.virtual_usage) && port.virtual_usage.length > 0
 
 const haChangesStore = useHAChangesStore()
 
@@ -174,36 +217,38 @@ const currentPage = ref(1)
 
 // Computed properties
 const totalPages = computed(() => {
-  return Math.ceil(props.ports.length / props.itemsPerPage)
+  return Math.ceil(filteredPorts.value.length / props.itemsPerPage)
 })
 
 const showPagination = computed(() => {
-  return props.ports.length > props.itemsPerPage
+  return filteredPorts.value.length > props.itemsPerPage
+})
+
+const filteredPorts = computed(() => {
+  if (!props.favoritesFilter) return props.ports
+  return props.ports.filter(p => props.favoriteCodes.has(p.code))
 })
 
 const visiblePorts = computed(() => {
-  if (!showPagination.value) {
-    return props.ports
-  }
-
+  const list = filteredPorts.value
+  if (list.length <= props.itemsPerPage) return list
   const start = (currentPage.value - 1) * props.itemsPerPage
-  const end = start + props.itemsPerPage
-
-  return props.ports.slice(start, end)
+  return list.slice(start, start + props.itemsPerPage)
 })
+
+const allFavorite = computed(() => props.ports.length > 0 && props.ports.every(p => props.favoriteCodes.has(p.code)))
+const allVirtualLinked = computed(() => props.ports.length > 0 && props.ports.every(p => isVirtualLinked(p)))
 
 // selectedPorts больше не используется, так как статус рассчитывается через store
 
 // Функция для расчета текущего статуса порта (база + изменение из store)
 const getPortCurrentStatus = (port) => {
-  // В режиме HA используем реальный статус из HA данных
+  // В режиме HA базовое состояние — всегда "не выбрано".
+  // Пользователь явно выбирает порты для добавления в виртуальное устройство,
+  // а факт публикации в HA показывается отдельной меткой.
   if (props.showHaCheckboxes) {
-    const haStatus = port.ha?.ha_published || false
     const storeAction = haChangesStore.getPortAction(props.device_id, port.code)
-
-    if (storeAction === 'add') return true
-    if (storeAction === 'remove') return false
-    return haStatus
+    return storeAction === 'add'
   }
   
   // В обычном режиме используем старую логику
@@ -262,8 +307,8 @@ const handlePortEdit = (port) => {
 }
 
 const handlePortHAToggle = (port, value) => {
-  // В режиме HA используем реальный статус из HA данных как базовый
-  const baseStatus = props.showHaCheckboxes ? (port.ha?.ha_published || false) : !!port.published
+  // В режиме HA базовый статус всегда false — выбор делает пользователь.
+  const baseStatus = props.showHaCheckboxes ? false : !!port.published
   const currentStatus = getPortCurrentStatus(port)
 
   console.log('handlePortHAToggle:', {
@@ -311,8 +356,8 @@ const toggleGroupHA = (value) => {
 
   // Обновляем все порты в группе через цикл
   props.ports.forEach(port => {
-    // В режиме HA используем реальный статус из HA данных как базовый
-    const baseStatus = props.showHaCheckboxes ? (port.ha?.ha_published || false) : !!port.published
+    // В режиме HA базовый статус всегда false — выбор делает пользователь.
+    const baseStatus = props.showHaCheckboxes ? false : !!port.published
 
     // Вычисляем действие для store
     let action

@@ -1,116 +1,197 @@
 <template>
   <v-card class="mb-2 device-card" elevation="1">
-    <v-toolbar density="compact" :elevation="1" border>
-      📟 {{ device.name }}
-      <v-chip 
-        density="comfortable" 
-        size="x-small" 
-        color="info"
-        class="device-id-chip"
-        @click="copyDeviceIP"
-      >
-        <v-tooltip location="top">
-          <template v-slot:activator="{ props }">
-            <span v-bind="props">id: {{ device.id }}</span>
-          </template>
-          <span>IP: {{ deviceIP || 'N/A' }}</span>
-        </v-tooltip>
-      </v-chip>
-
-      <!-- Индикация обновления устройства -->
-      <div class="update-indicator-wrapper device-update-wrapper">
-        <UpdateIndicator
-          :show="deviceUpdated"
-          :duration="1000"
-          title="Данные обновлены"
-          class="device-update"
-        />
-      </div>
-      <!--      {{device.online ?1 :0}}-->
-      <v-chip
-        v-if="isDeviceOnline"
-        density="comfortable"
-        size="x-small"
-        color="success"
-      >online
-      </v-chip>
-      <v-chip
-        v-else
-        density="comfortable"
-        size="x-small"
-        color="error"
-      >offline
-      </v-chip>
-
-      <!-- Индикация Home Assistant -->
-      <v-chip
-        v-if="haIntegrationEnabled"
-        density="comfortable"
-        size="x-small"
-        :color="hasPendingHAChanges ? 'warning' : 'grey'"
-        :variant="hasPendingHAChanges ? 'tonal' : 'outlined'"
-      >
-        <v-icon size="12" class="me-1">mdi-home-assistant</v-icon>
-        HA
-      </v-chip>
-      <v-badge
-        v-if="hasPendingHAChanges"
-        location="top right"
-        :content="haChangesStore.getDeviceChangesCount(props.device.id)"
-        color="primary"
-        overlap
-        class="ms-1 badge-number"
-      >
-      </v-badge>
-
-      <ActionHandler
-        :actions="actions"
-        :params="{device_id: device.id, ...device, ...(device?.params || {})}"
-      >
-        <v-btn 
-          icon 
-          v-if="!readonly" 
-          @click="refreshDeviceData"
-          :loading="refreshingDeviceData"
-          class="me-1"
-        >
-          <v-icon size="18" icon="mdi-refresh"/>
-        </v-btn>
-      </ActionHandler>
-    </v-toolbar>
-
-    <!-- Информационная строка с бэкапами и логами -->
-    <div class="info-line">
-      <v-divider class="mb-1"></v-divider>
-      <div class="d-flex align-center justify-space-between text-caption text-grey-darken-1 px-4 py-2">
-        <div class="d-flex align-center">
-          <!-- Статус бэкапа -->
-          <div class="d-flex align-center me-4">
-            <v-icon size="14" class="me-1" :color="backupStatusColor">mdi-backup-restore</v-icon>
-            <span class="me-2">{{ backupStatusText }}</span>
-            <v-btn size="x-small" variant="outlined" @click="triggerManualBackup" :loading="backupLoading">
-              <v-icon size="12">mdi-play</v-icon>
-            </v-btn>
-          </div>
-
-          <!-- Статус логов (если есть модуль логов) -->
-          <div v-if="hasLogsModule" class="d-flex align-center me-4">
-            <v-icon size="14" class="me-1" :color="logsStatusColor">mdi-file-document</v-icon>
-            <span class="me-2">{{ logsStatusText }}</span>
-            <v-btn size="x-small" variant="outlined" @click="triggerManualLogsExport" :loading="logsLoading">
-              <v-icon size="12">mdi-play</v-icon>
-            </v-btn>
-          </div>
+    <header class="device-header" :class="{ 'device-header--offline': !isDeviceOnline }">
+      <!-- Строка 1: идентификация + основные действия -->
+      <div class="device-header__row device-header__row--identity">
+        <div class="device-header__identity" :title="device.name">
+          <span class="device-header__chip-icon" aria-hidden="true">
+            <v-icon size="18">mdi-chip</v-icon>
+          </span>
+          <span class="device-header__name">{{ device.name }}</span>
+          <v-tooltip location="top">
+            <template v-slot:activator="{ props }">
+              <button
+                v-bind="props"
+                type="button"
+                class="device-header__id"
+                @click="copyDeviceIP"
+              >
+                id:&nbsp;{{ device.id }}
+              </button>
+            </template>
+            <span>IP: {{ deviceIP || 'N/A' }} · нажмите, чтобы скопировать</span>
+          </v-tooltip>
+          <span
+            class="device-header__pulse update-indicator-wrapper"
+            title="Данные обновлены"
+            aria-hidden="true"
+          >
+            <UpdateIndicator :show="deviceUpdated" :duration="1000" class="device-update" />
+          </span>
         </div>
 
-        <!-- Кнопка деталей -->
-        <v-btn size="small" variant="outlined" @click="showDetailsModal = true">
-          <v-icon size="14" class="me-1">mdi-information</v-icon>
-          Детали
-        </v-btn>
+        <div v-if="!readonly" class="device-header__actions">
+          <v-btn
+            icon
+            variant="text"
+            size="small"
+            density="comfortable"
+            :color="virtualConfigMode ? 'orange' : undefined"
+            title="Интерактивное добавление в виртуальные устройства"
+            aria-label="Добавить в виртуальное устройство"
+            @click="virtualConfigMode = !virtualConfigMode"
+          >
+            <v-icon size="18">mdi-source-branch</v-icon>
+          </v-btn>
+
+          <ActionHandler
+            :actions="actions"
+            :params="{device_id: device.id, ...device, ...(device?.params || {})}"
+          >
+            <v-btn
+              icon
+              variant="text"
+              size="small"
+              density="comfortable"
+              @click="refreshDeviceData"
+              :loading="refreshingDeviceData"
+              title="Перезапросить текущие порты"
+              aria-label="Обновить данные устройства"
+            >
+              <v-icon size="18" icon="mdi-refresh" />
+            </v-btn>
+          </ActionHandler>
+
+          <v-btn
+            icon
+            variant="text"
+            size="small"
+            density="comfortable"
+            color="error"
+            title="Удалить устройство"
+            aria-label="Удалить устройство"
+            @click="deleteDevice"
+          >
+            <v-icon size="18" icon="mdi-delete" />
+          </v-btn>
+        </div>
       </div>
-      <v-divider class="mt-1"></v-divider>
-    </div>
+
+      <!-- Строка 2: статусы + сервисные показатели + «Детали» -->
+      <div class="device-header__row device-header__row--status">
+        <div class="device-header__status" aria-label="Состояние устройства">
+          <v-chip
+            density="compact"
+            size="x-small"
+            :color="isDeviceOnline ? 'success' : 'error'"
+            variant="tonal"
+            :title="isDeviceOnline ? 'Устройство в сети' : 'Устройство недоступно'"
+            class="device-status-chip"
+          >
+            <v-icon size="13" start aria-hidden="true">
+              {{ isDeviceOnline ? 'mdi-check-circle' : 'mdi-close-circle' }}
+            </v-icon>
+            {{ isDeviceOnline ? 'online' : 'offline' }}
+          </v-chip>
+
+          <v-chip
+            v-if="syncState.status"
+            density="compact"
+            size="x-small"
+            :color="syncState.color"
+            variant="outlined"
+            :title="syncState.title"
+            class="device-status-chip"
+          >
+            <v-icon size="12" start>mdi-sync</v-icon>
+            {{ syncState.label }}
+          </v-chip>
+
+          <v-badge
+            v-if="hasPendingHAChanges"
+            :content="haChangesStore.getDeviceChangesCount(props.device.id)"
+            color="primary"
+            location="top right"
+            overlap
+            class="device-ha-badge"
+          >
+            <v-chip
+              density="compact"
+              size="x-small"
+              color="warning"
+              variant="tonal"
+              title="Есть изменения для Home Assistant"
+              class="device-status-chip"
+            >
+              <v-icon size="12" start>mdi-home-assistant</v-icon>
+              HA
+            </v-chip>
+          </v-badge>
+          <v-chip
+            v-else-if="virtualPublishedCount > 0"
+            density="compact"
+            size="x-small"
+            color="success"
+            variant="outlined"
+            :title="`Виртуальных портов опубликовано: ${virtualPublishedCount}`"
+            class="device-status-chip"
+          >
+            <v-icon size="12" start>mdi-home-assistant</v-icon>
+            HA · {{ virtualPublishedCount }}
+          </v-chip>
+        </div>
+
+        <div class="device-header__meta">
+          <button
+            type="button"
+            class="device-header__metric"
+            :class="`device-header__metric--${backupStatusColor}`"
+            :title="`Последний бэкап: ${backupStatusText}. Нажмите, чтобы запустить сейчас`"
+            :disabled="backupLoading"
+            @click="triggerManualBackup"
+          >
+            <v-progress-circular
+              v-if="backupLoading"
+              size="14"
+              width="2"
+              indeterminate
+            />
+            <v-icon v-else size="14">mdi-backup-restore</v-icon>
+            <span>{{ backupStatusText }}</span>
+          </button>
+
+          <button
+            v-if="hasLogsModule"
+            type="button"
+            class="device-header__metric"
+            :class="`device-header__metric--${logsStatusColor}`"
+            :title="`Экспорт логов: ${logsStatusText}. Нажмите, чтобы запустить сейчас`"
+            :disabled="logsLoading"
+            @click="triggerManualLogsExport"
+          >
+            <v-progress-circular
+              v-if="logsLoading"
+              size="14"
+              width="2"
+              indeterminate
+            />
+            <v-icon v-else size="14">mdi-file-document-outline</v-icon>
+            <span>{{ logsStatusText }}</span>
+          </button>
+
+          <v-btn
+            class="device-header__details"
+            size="small"
+            variant="tonal"
+            density="comfortable"
+            prepend-icon="mdi-information-outline"
+            @click="showDetailsModal = true"
+          >
+            Детали
+          </v-btn>
+        </div>
+      </div>
+    </header>
 
     <v-row
       v-if="false"
@@ -134,6 +215,52 @@
     </v-row>
 
     <v-card-text class="device-content">
+      <div v-if="virtualConfigMode" class="virtual-selection-toolbar mb-2">
+        <v-icon size="18" color="orange" class="me-2">mdi-source-branch</v-icon>
+        <span class="text-body-2 font-weight-medium me-3">Добавление в виртуальное устройство</span>
+        <v-text-field
+          v-model="virtualFilter"
+          label="Имя"
+          placeholder="Фильтр по имени"
+          prepend-inner-icon="mdi-magnify"
+          variant="outlined"
+          density="compact"
+          hide-details
+          clearable
+          class="virtual-filter"
+        />
+        <v-checkbox
+          v-model="hideVirtualPublished"
+          label="Скрыть уже в HA"
+          density="compact"
+          hide-details
+          class="ms-3"
+        />
+        <v-chip size="small" color="primary" variant="tonal" class="ms-auto">
+          Выбрано: {{ selectedVirtualCodes.length }}
+        </v-chip>
+        <v-btn
+          size="small"
+          variant="text"
+          prepend-icon="mdi-restore"
+          :disabled="!selectedVirtualCodes.length"
+          @click="resetVirtualSelection"
+        >
+          Сбросить
+        </v-btn>
+        <v-btn
+          size="small"
+          color="primary"
+          variant="flat"
+          prepend-icon="mdi-arrow-right"
+          :disabled="!selectedVirtualCodes.length"
+          :loading="virtualDraftLoading"
+          @click="continueVirtualSelection"
+        >
+          Продолжить
+        </v-btn>
+      </div>
+
       <v-row v-if="device.description">
         <v-col cols="12">
           {{ device.description }}
@@ -143,7 +270,7 @@
       <!-- Система отображения портов -->
       <div>
         <!-- Обработка разных типов групп -->
-        <template v-for="group in processedGroups" :key="group.title">
+        <template v-for="group in visibleProcessedGroups" :key="group.title">
           <!-- Группа файлов (логи) -->
           <FileListView
             v-if="group.type === 'file_list'"
@@ -162,7 +289,7 @@
             :device_id="device.id"
             :group-icon="getGroupIcon(group)"
             :collapsible="true"
-            :show-ha-checkboxes="haConfigMode && haIntegrationEnabled"
+            :show-ha-checkboxes="virtualConfigMode && haIntegrationEnabled"
             :show-group-update="updatedGroups.has(group.title)"
             :updated-ports="updatedPorts"
             @update="handlePortUpdate"
@@ -176,15 +303,94 @@
             :device_id="device.id"
             :group-icon="getGroupIcon(group)"
             :collapsible="true"
-            :show-ha-checkboxes="haConfigMode && haIntegrationEnabled"
+            :show-ha-checkboxes="virtualConfigMode && haIntegrationEnabled"
             :show-edit-buttons="false"
             :show-group-update="updatedGroups.has(group.title)"
             :updated-ports="updatedPorts"
+            :favorite-codes="favoriteCodes"
+            :favorites-filter="favoritesFilter"
             @update="handlePortUpdate"
+            @favorite-toggle="handleFavoriteToggle"
+            @favorites-filter="favoritesFilter = !favoritesFilter"
             class="mb-2"
           />
         </template>
       </div>
+
+      <v-dialog v-model="virtualDraftDialog" max-width="980px" scrollable>
+        <v-card>
+          <v-card-title class="d-flex align-center">
+            <v-icon class="me-2" color="primary">mdi-source-branch</v-icon>
+            Конфигурация виртуального устройства
+          </v-card-title>
+          <v-card-text>
+            <v-combobox
+              v-model="virtualDraftName"
+              :items="existingVirtualDeviceNames"
+              label="Имя виртуального устройства"
+              hint="Новое имя создаст устройство, существующее имя расширит его"
+              persistent-hint
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+            />
+            <v-alert v-if="virtualTargetDevice" type="info" variant="tonal" density="compact" class="mb-3">
+              Будет расширено существующее виртуальное устройство «{{ virtualTargetDevice.name }}».
+            </v-alert>
+            <div class="mb-3">
+              <TagsInput v-model="virtualDraftTags" :items="availableVirtualTags" :autoload="false" />
+            </div>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+              Выбрано параметров: {{ virtualDraft?.ports?.length || selectedVirtualCodes.length }}
+            </v-alert>
+            <div v-if="virtualDraft?.ports?.length" class="virtual-port-settings-list">
+              <div v-for="port in virtualDraft.ports" :key="port.physical_code" class="virtual-port-settings">
+                <div class="d-flex align-center mb-2">
+                  <v-icon size="18" color="primary" class="me-2">mdi-tune-variant</v-icon>
+                  <div>
+                    <div class="text-body-2 font-weight-medium">{{ port.physical_code }}</div>
+                    <div class="text-caption text-grey">Привязка к параметру платы</div>
+                  </div>
+                </div>
+                <v-row dense>
+                  <v-col cols="12" md="4">
+                    <v-text-field v-model="port.name" label="Имя порта" variant="outlined" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="12" md="2">
+                    <v-select v-model="port.type" :items="virtualPortTypeOptions" label="Тип HA" variant="outlined" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="12" md="2">
+                    <v-text-field v-model="port.unit_of_measurement" label="Единица" variant="outlined" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="12" md="2">
+                    <v-text-field v-model="port.device_class" label="Класс устройства" variant="outlined" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="12" md="2">
+                    <v-text-field v-model="port.icon" label="Иконка" placeholder="mdi-..." variant="outlined" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="12">
+                    <v-text-field v-model="port.description" label="Описание" variant="outlined" density="compact" hide-details />
+                  </v-col>
+                </v-row>
+              </div>
+            </div>
+            <v-alert v-if="virtualDraftDiff" type="success" variant="tonal" density="compact" class="mt-3">
+              Новых параметров: {{ virtualDraftDiff.ports_to_add?.length || 0 }};
+              уже существующих: {{ virtualDraftDiff.ports_existing?.length || 0 }}.
+            </v-alert>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="virtualDraftDialog = false">Отмена</v-btn>
+            <v-btn color="primary" @click="saveVirtualDraft" :loading="virtualDraftSaving">
+              Сохранить модель
+            </v-btn>
+            <v-btn color="success" @click="publishVirtualDraft" :loading="virtualDraftSaving">
+              Сохранить и опубликовать
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </v-card-text>
 
 
@@ -221,6 +427,7 @@
       @refresh-backup-history="loadBackupHistory"
       @download-backup-log="downloadBackupLog"
       @view-backup-log="viewBackupLog"
+      @delete-backup="deleteBackup"
       @view-config-file="handleConfigFileView"
       @download-config-file="handleConfigFileDownload"
       @trigger-logs-export="triggerManualLogsExport"
@@ -273,14 +480,168 @@
       </template>
     </v-snackbar>
 
+    <!-- Изменения физической конфигурации платы -->
+    <v-dialog v-model="showPortChangesDialog" max-width="760" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="me-2" color="info">mdi-sync-alert</v-icon>
+          <div class="d-flex flex-column">
+            <span>Изменения портов платы</span>
+            <span class="text-caption text-medium-emphasis">
+              {{ device.name }} · id {{ device.id }}<span v-if="device.params?.ip"> · {{ device.params.ip }}</span>
+            </span>
+          </div>
+          <v-spacer></v-spacer>
+          <v-btn
+            v-if="getDeviceBaseUrl()"
+            :href="getDeviceBaseUrl()"
+            target="_blank"
+            rel="noopener"
+            variant="outlined"
+            size="small"
+            class="me-2"
+            prepend-icon="mdi-open-in-new"
+          >
+            Конфиг устройства
+          </v-btn>
+          <v-btn icon variant="text" @click="showPortChangesDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-card-text>
+          <v-alert type="info" variant="tonal" class="mb-4">
+            Получена новая физическая конфигурация платы. Home Assistant пока не изменялся.
+            Проверьте изменения и выполните пересинхронизацию вручную.
+          </v-alert>
+
+          <template v-if="portRefreshChanges">
+            <div v-if="portRefreshChanges.added?.length" class="mb-4">
+              <div class="text-subtitle-1 text-success mb-2">
+                Добавлены ({{ portRefreshChanges.added.length }})
+              </div>
+              <v-chip
+                v-for="port in portRefreshChanges.added"
+                :key="`added-${port.code}-${port.direction}`"
+                class="ma-1"
+                color="success"
+                variant="tonal"
+              >
+                {{ port.title || port.name || port.code }}
+              </v-chip>
+            </div>
+
+            <div v-if="portRefreshChanges.removed?.length" class="mb-4">
+              <div class="text-subtitle-1 text-error mb-2">
+                Удалены ({{ portRefreshChanges.removed.length }})
+              </div>
+              <v-chip
+                v-for="port in portRefreshChanges.removed"
+                :key="`removed-${port.code}-${port.direction}`"
+                class="ma-1"
+                color="error"
+                variant="tonal"
+              >
+                {{ port.title || port.name || port.code }}
+              </v-chip>
+            </div>
+
+            <div v-if="meaningfulChangedPorts.length" class="mb-2">
+              <div class="text-subtitle-1 text-warning mb-2">
+                Изменены ({{ meaningfulChangedPorts.length }})
+              </div>
+              <v-expansion-panels variant="accordion" multiple>
+                <v-expansion-panel
+                  v-for="change in meaningfulChangedPorts"
+                  :key="`changed-${change.after.code}`"
+                >
+                  <v-expansion-panel-title>
+                    <div class="d-flex flex-column">
+                      <span>{{ change.after.title || change.before.title || change.after.code }}</span>
+                      <span class="text-caption text-medium-emphasis">
+                        {{ change.after.code }}
+                        <template v-if="(change.changed_fields || []).length">
+                          · изменено:
+                          {{ (change.changed_fields || []).map(portFieldLabel).join(', ') }}
+                        </template>
+                        <template v-else>
+                          · изменились служебные поля
+                        </template>
+                      </span>
+                    </div>
+                  </v-expansion-panel-title>
+                  <v-expansion-panel-text>
+                    <div
+                      v-for="field in portChangedFieldsFor(change)"
+                      :key="field"
+                      class="mb-1"
+                    >
+                      <strong>{{ portFieldLabel(field) }}:</strong>
+                      <span class="text-medium-emphasis">{{ formatPortFieldValue(change.before[field]) }}</span>
+                      →
+                      <span>{{ formatPortFieldValue(change.after[field]) }}</span>
+                    </div>
+                    <div class="mt-2 d-flex ga-2 flex-wrap">
+                      <v-btn
+                        v-if="portConfigUrl(change.after) || portConfigUrl(change.before)"
+                        :href="portConfigUrl(change.after) || portConfigUrl(change.before)"
+                        target="_blank"
+                        rel="noopener"
+                        size="small"
+                        variant="outlined"
+                        prepend-icon="mdi-open-in-new"
+                      >
+                        Открыть порт на плате
+                      </v-btn>
+                      <v-btn
+                        size="small"
+                        variant="text"
+                        prepend-icon="mdi-code-json"
+                        @click="change._showRaw = !change._showRaw"
+                      >
+                        {{ change._showRaw ? 'Скрыть JSON' : 'Показать JSON' }}
+                      </v-btn>
+                    </div>
+                    <pre v-if="change._showRaw" class="mt-2 pa-2 text-caption" style="background: rgba(0,0,0,0.04); border-radius: 4px; overflow-x: auto;">{{ JSON.stringify({ before: change.before, after: change.after }, null, 2) }}</pre>
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+            </div>
+
+            <v-alert
+              v-if="!hasMeaningfulChanges"
+              type="success"
+              variant="tonal"
+            >
+              Изменений в физической конфигурации не найдено.
+            </v-alert>
+          </template>
+        </v-card-text>
+
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="showPortChangesDialog = false">Закрыть</v-btn>
+          <v-btn
+            v-if="hasMeaningfulChanges"
+            color="primary"
+            variant="outlined"
+            @click="openHAIntegrationAfterPortRefresh"
+          >
+            Перейти к пересинхронизации HA
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </v-card>
 </template>
 
 <script setup>
-import {ref, computed, onMounted} from 'vue'
+import {ref, computed, onMounted, watch} from 'vue'
 import ActionHandler from '@/components/devices/ActionHandler.vue'
 import {useTableStore} from '@/store/tables'
 import MyFormField from '@/components/form_elements/MyFormField.vue'
+import TagsInput from '@/components/form_elements/TagsInput.vue'
 import {usePortsStore} from '@/store/portsStore'
 import {useHAChangesStore} from '@/store/haChangesStore'
 import useMessageStore from '@/store/messages'
@@ -311,7 +672,218 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['device-updated'])
+const emit = defineEmits(['device-updated', 'deleted'])
+
+const virtualConfigMode = ref(false)
+const virtualFilter = ref('')
+const hideVirtualPublished = ref(false)
+const virtualOverview = ref([])
+const virtualDraftDialog = ref(false)
+const virtualDraftLoading = ref(false)
+const virtualDraftSaving = ref(false)
+const virtualDraftName = ref('')
+const existingVirtualDevices = ref([])
+const virtualDraftTags = ref([])
+const availableVirtualTags = ref([])
+const virtualDraft = ref(null)
+const virtualDraftDiff = ref(null)
+const virtualPortTypeOptions = ['sensor', 'switch', 'number', 'input_boolean', 'input_text', 'input_select', 'input_button']
+const existingVirtualDeviceNames = computed(() => existingVirtualDevices.value.map(device => device.name))
+const virtualTargetDevice = computed(() => {
+  const name = virtualDraftName.value.trim().toLowerCase()
+  return existingVirtualDevices.value.find(device => device.name.trim().toLowerCase() === name) || null
+})
+
+const loadExistingVirtualDevices = async () => {
+  try {
+    const response = await secureFetch('/api/virtual-devices')
+    const data = await response.json()
+    existingVirtualDevices.value = data.devices || []
+  } catch (error) {
+    console.warn('Failed to load existing virtual devices:', error)
+  }
+}
+
+const normalizeTag = (value) => {
+  const text = String(value || '').trim().replace(/^#+/, '')
+  return text ? `#${text}` : ''
+}
+
+const inferPortPresentation = (port) => {
+  const text = `${port.name || ''} ${port.title || ''} ${port.physical_code || ''} ${port.unit_of_measurement || ''}`.toLowerCase()
+  let deviceClass = port.device_class || ''
+  let icon = port.icon || ''
+  if (!deviceClass) {
+    if (/темпера|temperature|temp|°c|celsius/.test(text)) deviceClass = 'temperature'
+    else if (/влаж|humid/.test(text)) deviceClass = 'humidity'
+    else if (/давлен|pressure/.test(text)) deviceClass = 'pressure'
+    else if (/мощн|power|ватт|watt/.test(text)) deviceClass = 'power'
+    else if (/энерг|energy|квт|kwh/.test(text)) deviceClass = 'energy'
+    else if (/напряж|voltage|volt|вольт/.test(text)) deviceClass = 'voltage'
+    else if (/ток|current|ампер|amp/.test(text)) deviceClass = 'current'
+    else if (/батар|battery/.test(text)) deviceClass = 'battery'
+    else if (/rssi|signal|сигнал/.test(text)) deviceClass = 'signal_strength'
+  }
+  if (!icon) {
+    if (deviceClass === 'temperature') icon = 'mdi-thermometer'
+    else if (deviceClass === 'humidity') icon = 'mdi-water-percent'
+    else if (deviceClass === 'pressure') icon = 'mdi-gauge'
+    else if (deviceClass === 'power' || deviceClass === 'energy') icon = 'mdi-flash'
+    else if (deviceClass === 'voltage') icon = 'mdi-sine-wave'
+    else if (deviceClass === 'current') icon = 'mdi-current-ac'
+    else if (deviceClass === 'battery') icon = 'mdi-battery'
+    else if (deviceClass === 'signal_strength') icon = 'mdi-wifi'
+    else if (port.type === 'switch') icon = 'mdi-toggle-switch'
+    else icon = 'mdi-chart-line'
+  }
+  return { deviceClass, icon }
+}
+
+const loadVirtualTags = async () => {
+  try {
+    const response = await secureFetch('/api/virtual-devices')
+    const data = await response.json()
+    availableVirtualTags.value = (data.tags || []).map(normalizeTag).filter(Boolean)
+  } catch (error) {
+    console.warn('Failed to load virtual device tags:', error)
+  }
+}
+
+const selectedVirtualCodes = computed(() => {
+  const changes = haChangesStore.changes[props.device.id] || {}
+  const codes = Object.entries(changes)
+    .filter(([, action]) => action === 'add')
+    .map(([code]) => code.startsWith('virtual-service:') ? code.slice('virtual-service:'.length) : code)
+  return [...new Set(codes)]
+})
+
+const resetVirtualSelection = () => {
+  haChangesStore.clearDeviceChanges(props.device.id)
+}
+
+const continueVirtualSelection = async () => {
+  if (!selectedVirtualCodes.value.length) return
+  virtualDraftLoading.value = true
+  try {
+    await loadVirtualTags()
+    if (!virtualDraftName.value) {
+      virtualDraftName.value = `${props.device.name} — виртуальное устройство`
+    }
+    await loadExistingVirtualDevices()
+    const response = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft`, {
+      method: 'POST',
+      data: {
+        source_type: 'port',
+        selected_codes: selectedVirtualCodes.value,
+        name: virtualDraftName.value,
+        tags: virtualDraftTags.value,
+        target_virtual_device_id: virtualTargetDevice.value?.id || null
+      }
+    })
+    const data = await response.json()
+    data.draft.ports = (data.draft.ports || []).map(port => {
+      const presentation = inferPortPresentation(port)
+      return {
+        ...port,
+        device_class: port.device_class || presentation.deviceClass,
+        icon: port.icon || presentation.icon,
+        entity_category: port.entity_category || 'diagnostic'
+      }
+    })
+    virtualDraft.value = data.draft
+    const previewResponse = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/preview`, {
+      method: 'POST',
+      data: { draft: data.draft }
+    })
+    virtualDraftDiff.value = (await previewResponse.json()).diff
+    virtualDraftDialog.value = true
+  } catch (error) {
+    console.error('Failed to create virtual device draft:', error)
+    messageStore.showError('Не удалось сформировать конфигурацию виртуального устройства')
+  } finally {
+    virtualDraftLoading.value = false
+  }
+}
+
+const refreshVirtualDraftPreview = async () => {
+  if (!virtualDraft.value) return
+  try {
+    const response = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/preview`, {
+      method: 'POST',
+      data: { draft: virtualDraft.value }
+    })
+    virtualDraftDiff.value = (await response.json()).diff
+  } catch (error) {
+    console.warn('Failed to refresh virtual draft preview:', error)
+  }
+}
+
+watch(virtualDraftName, () => {
+  if (!virtualDraftDialog.value) return
+  syncVirtualDraftTarget()
+  refreshVirtualDraftPreview()
+})
+
+watch(virtualDraftTags, () => {
+  if (!virtualDraftDialog.value) return
+  syncVirtualDraftTarget()
+}, { deep: true })
+
+const syncVirtualDraftTarget = () => {
+  if (!virtualDraft.value) return
+  const name = (virtualDraftName.value || '').trim()
+  const existing = existingVirtualDevices.value.find(
+    device => String(device.name || '').trim().toLowerCase() === name.toLowerCase()
+  )
+  virtualDraft.value.target = {
+    ...(virtualDraft.value.target || {}),
+    id: existing ? existing.id : null,
+    name: name || virtualDraft.value.target?.name || '',
+    tags: virtualDraftTags.value
+  }
+}
+
+const saveVirtualDraft = async () => {
+  if (!virtualDraft.value) return
+  syncVirtualDraftTarget()
+  virtualDraftSaving.value = true
+  try {
+    await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/apply`, {
+      method: 'POST',
+      data: { draft: virtualDraft.value, confirmed: true }
+    })
+    virtualDraftDialog.value = false
+    resetVirtualSelection()
+    await loadVirtualOverview()
+    messageStore.showSuccess('Виртуальная модель сохранена')
+  } catch (error) {
+    console.error('Failed to save virtual device draft:', error)
+    messageStore.showError('Не удалось сохранить виртуальную модель')
+  } finally {
+    virtualDraftSaving.value = false
+  }
+}
+
+const publishVirtualDraft = async () => {
+  if (!virtualDraft.value) return
+  syncVirtualDraftTarget()
+  virtualDraftSaving.value = true
+  try {
+    await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-draft/publish`, {
+      method: 'POST',
+      data: { draft: virtualDraft.value, confirmed: true }
+    })
+    virtualDraftDialog.value = false
+    resetVirtualSelection()
+    await loadVirtualOverview()
+    messageStore.showSuccess('Виртуальная модель опубликована в Home Assistant')
+  } catch (error) {
+    console.error('Failed to publish virtual device draft:', error)
+    messageStore.showError('Не удалось опубликовать виртуальную модель')
+  } finally {
+    virtualDraftSaving.value = false
+  }
+}
 
 const tableStore = useTableStore()
 const portsStore = usePortsStore()
@@ -356,6 +928,81 @@ const logsConfig = ref({})
 const showSnackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref('success')
+const showPortChangesDialog = ref(false)
+const portRefreshChanges = ref(null)
+
+const PORT_FIELD_LABELS = {
+  title: 'название',
+  direction: 'направление',
+  kind: 'тип',
+  type_raw: 'тип (raw)',
+  unit: 'единица',
+  group_title: 'группа',
+  value_type: 'формат значения',
+}
+
+function portFieldLabel(field) {
+  return PORT_FIELD_LABELS[field] || field
+}
+
+function formatPortFieldValue(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+const PORT_DIFF_FALLBACK_FIELDS = [
+  'title', 'direction', 'kind', 'type_raw', 'unit',
+  'group_title', 'value_type', 'mqtt', 'href', 'block_id',
+]
+
+// Поля, меняющиеся при каждом опросе платы (значения датчиков, время),
+// а не при изменении конфигурации — игнорируем в диффе.
+const PORT_DIFF_IGNORED_FIELDS = new Set([
+  'val', 'value', 'raw', 'extra', 'last_update', 'available',
+  'ha_eligible', 'state',
+])
+
+function portChangedFieldsFor(change) {
+  const listed = (change?.changed_fields || []).filter(f => !PORT_DIFF_IGNORED_FIELDS.has(f))
+  if (listed.length) return listed
+  const before = change?.before || {}
+  const after = change?.after || {}
+  const keys = new Set([
+    ...PORT_DIFF_FALLBACK_FIELDS,
+    ...Object.keys(before),
+    ...Object.keys(after),
+  ])
+  const diff = []
+  for (const key of keys) {
+    if (PORT_DIFF_IGNORED_FIELDS.has(key)) continue
+    const b = before[key]
+    const a = after[key]
+    if (JSON.stringify(b) !== JSON.stringify(a)) diff.push(key)
+  }
+  return diff
+}
+
+const meaningfulChangedPorts = computed(() => {
+  const list = portRefreshChanges.value?.changed || []
+  return list.filter(change => portChangedFieldsFor(change).length > 0)
+})
+
+const hasMeaningfulChanges = computed(() => {
+  const c = portRefreshChanges.value
+  if (!c) return false
+  return Boolean(c.added?.length || c.removed?.length || meaningfulChangedPorts.value.length)
+})
+
+function portConfigUrl(port) {
+  if (!port) return ''
+  const base = getDeviceBaseUrl()
+  if (!base) return ''
+  const href = port.href || port.group_href
+  if (!href) return base
+  if (/^https?:\/\//i.test(href)) return href
+  return `${base}${href.startsWith('/') ? '' : '/'}${href}`
+}
 
 // Проверка наличия модуля логов
 const hasLogsModule = computed(() => {
@@ -453,6 +1100,15 @@ const logsStatusText = computed(() => {
 const deviceData = ref([])
 const haIntegrationEnabled = ref(false)
 const haStatus = ref({}) // Добавляем переменную для хранения HA статуса
+const syncState = ref({})
+
+const syncStateView = {
+  not_started: { label: 'нет', color: 'grey' },
+  loading: { label: 'загрузка', color: 'info' },
+  synced: { label: 'актуально', color: 'success' },
+  stale: { label: 'устарело', color: 'warning' },
+  error: { label: 'ошибка', color: 'error' }
+}
 
 // Состояние для индикации обновлений
 const updatedPorts = ref(new Set())
@@ -462,6 +1118,13 @@ const deviceUpdated = ref(false)
 // Проверка наличия ожидающих изменений HA для этого устройства
 const hasPendingHAChanges = computed(() => {
   return haChangesStore.getDeviceChangesCount(props.device.id) > 0
+})
+
+const virtualPublishedCount = computed(() => {
+  return virtualOverview.value.reduce(
+    (total, port) => total + (port.virtual_usage || []).filter(item => item.published_to_ha).length,
+    0
+  )
 })
 
 // Функция для проверки статуса публикации порта в HA
@@ -482,40 +1145,64 @@ const getPortFriendlyName = (portCode) => {
 // Computed property для проверки наличия информации о бэкапах
 
 // Загрузка данных устройства из API
-const loadDeviceData = async () => {
+const loadDeviceData = async (refreshPorts = false) => {
   try {
-    const response = await secureFetch(`/api/live/${props.device.params?.ip}/get_value`)
+    const url = `/api/myhome/device/${props.device.id}/ports`
+    const response = refreshPorts
+      ? await secureFetch(`${url}/refresh`, {method: 'POST'})
+      : await secureFetch(url)
     const data = await response.json()
-    
-    // Обрабатываем новую структуру данных с ha_status
-    if (data && typeof data === 'object') {
-      if (Array.isArray(data)) {
-        // Старая структура - массив
-        deviceData.value = data
-      } else if (data.ports && Array.isArray(data.ports)) {
-        // Новая структура - объект с полем ports
-        deviceData.value = data.ports
-        // Сохраняем информацию о HA статусе для использования в компоненте
-        if (data.ha_status) {
-          haStatus.value = data.ha_status
-          console.log('HA Status:', data.ha_status)
+    const sync = data?.device?.sync || {}
+    const syncView = syncStateView[sync.sync_status] || syncStateView.not_started
+    syncState.value = {
+      status: sync.sync_status,
+      ...syncView,
+      title: sync.last_error || sync.offline_reason || sync.snapshot_at || 'Состояние синхронизации'
+    }
+
+    if (data?.ports && Array.isArray(data.ports)) {
+      deviceData.value = data.ports.map(port => ({
+        ...port,
+        ha: port.ha || {
+          ha_published: port.ha_published || false,
+          entity_id: port.entity_id || ''
         }
-      } else {
-        // Другие структуры - преобразуем в массив
-        deviceData.value = Object.keys(data).map(key => ({
-          code: key,
-          val: data[key],
-          type: 'unknown'
-        }))
-      }
+      }))
+    } else if (Array.isArray(data)) {
+      deviceData.value = data
     } else {
       deviceData.value = []
     }
+
+    if (refreshPorts && data?.changes) {
+      portRefreshChanges.value = data.changes
+      // Открываем диалог только если есть смысловые изменения —
+      // шум от телеметрии (raw.floor, last_update, …) не должен всплывать.
+      showPortChangesDialog.value = hasMeaningfulChanges.value
+    }
+
+    return data
   } catch (error) {
     console.warn('Failed to load device data:', error)
     deviceData.value = []
+    throw error
   }
 }
+
+const loadVirtualOverview = async () => {
+  try {
+    const response = await secureFetch(`/api/myhome/device/${props.device.id}/ha/virtual-overview`)
+    const data = await response.json()
+    virtualOverview.value = data.physical_ports || []
+  } catch (error) {
+    console.warn('Failed to load virtual overview:', error)
+    virtualOverview.value = []
+  }
+}
+
+watch(virtualConfigMode, (enabled) => {
+  if (enabled) loadVirtualOverview()
+})
 
 
 // Загрузка настроек HA интеграции
@@ -558,9 +1245,37 @@ const handleSettingsUpdated = async () => {
   console.log('HA settings updated')
 }
 
+// Избранные порты устройства
+const favoritePorts = ref([])
+const favoritesFilter = ref(false)
+
+const favoriteCodes = computed(() => new Set(favoritePorts.value.map(p => p.code)))
+
+const handleFavoriteToggle = async (port) => {
+  const index = favoritePorts.value.findIndex(p => p.code === port.code)
+  if (index >= 0) {
+    favoritePorts.value.splice(index, 1)
+  } else {
+    favoritePorts.value.push({ code: port.code, title: port.title || port.name || port.code })
+  }
+  try {
+    await secureFetch(`/api/devices/${props.device.id}/favorite-ports`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ favorite_ports: favoritePorts.value })
+    })
+  } catch (error) {
+    console.error('Error updating favorite ports:', error)
+  }
+}
+
 // Загрузка данных при монтировании
 onMounted(async () => {
+  favoritePorts.value = Array.isArray(props.device.params?.favoritePorts)
+    ? [...props.device.params.favoritePorts]
+    : []
   await loadDeviceData()
+  await loadVirtualOverview()
   await loadHASettings()
   await loadDeviceInfo()
   subscribeToPortUpdates()
@@ -574,6 +1289,53 @@ const expandedGroups = ref(new Set())
 // Обработка данных из API для группировки
 const processedGroups = computed(() => {
   const groups = {}
+  const virtualStatusByCode = new Map(
+    virtualOverview.value.map(port => [String(port.code), port.virtual_status])
+  )
+  const virtualUsageByCode = new Map(
+    virtualOverview.value.map(port => [String(port.code), port.virtual_usage || []])
+  )
+  const enrichPort = (port) => ({
+    ...port,
+    virtual_status: virtualStatusByCode.get(String(port.code)) || port.virtual_status,
+    virtual_usage: virtualUsageByCode.get(String(port.code)) || [],
+    // HA-публикация определяется только виртуальными портами.
+    ha: {
+      ...(port.ha || {}),
+      ha_published: (virtualUsageByCode.get(String(port.code)) || []).some(item => item.published_to_ha),
+      entity_id: (virtualUsageByCode.get(String(port.code)) || []).find(item => item.published_to_ha)?.entity_id || ''
+    }
+  })
+
+  const getRootGroup = (item) => {
+    const code = String(item.code || '').toLowerCase()
+    const title = String(item.title || '').toLowerCase()
+    if (item.group_title) return item.group_title
+    if (item.block_id) {
+      const blockTitles = {
+        system: 'System',
+        gpio_24: 'HKL-EA8 outputs',
+        gpio_26: 'HKL-EA8 inputs',
+        buzzer: 'HKL-EA8 buzzer',
+        my_485: 'MY_485',
+        my_home_link: 'MY_HOME Link',
+        floor_heating: 'Floor Heating',
+        boiler_ctrl: 'Boiler',
+        status: 'status'
+      }
+      return blockTitles[item.block_id] || item.block_id
+    }
+    if (['millis', 'network_priority'].includes(code) || code.startsWith('status.')) {
+      return 'System'
+    }
+    if (code.startsWith('floor_heating.') || title.includes('отоплен') || title.includes('котёл')) {
+      return 'Floor Heating'
+    }
+    if (code.startsWith('boiler_ctrl.') || code.startsWith('boiler_transport.')) {
+      return 'Boiler'
+    }
+    return 'Основные'
+  }
 
   deviceData.value.forEach(item => {
     if (item.data && Array.isArray(item.data)) {
@@ -582,8 +1344,9 @@ const processedGroups = computed(() => {
       groups[groupKey] = {
         title: groupKey,
         items: item.data.map(port => ({
-          ...port,
-          haPublished: port.ha?.ha_published || false
+          ...enrichPort(port),
+          title: getPortTitle(port),
+          haPublished: (virtualUsageByCode.get(String(port.code)) || []).some(item => item.published_to_ha)
         })),
         hasSubgroups: true,
         tpl: item.tpl || 'default',
@@ -606,7 +1369,7 @@ const processedGroups = computed(() => {
       }
     } else {
       // Это отдельный элемент
-      const groupKey = 'Основные'
+      const groupKey = getRootGroup(item)
       if (!groups[groupKey]) {
         groups[groupKey] = {
           title: groupKey,
@@ -617,8 +1380,9 @@ const processedGroups = computed(() => {
         }
       }
       groups[groupKey].items.push({
-        ...item,
-        haPublished: item.ha?.ha_published || false
+        ...enrichPort(item),
+        title: getPortTitle(item),
+        haPublished: (virtualUsageByCode.get(String(item.code)) || []).some(item => item.published_to_ha)
       })
     }
   })
@@ -638,8 +1402,107 @@ const processedGroups = computed(() => {
     }
   })
 
+  if (virtualConfigMode.value) {
+    const virtualPorts = [
+      {
+        id: `virtual-status-${props.device.id}`,
+        code: 'virtual.connection_status',
+        title: 'Статус подключения',
+        description: 'Состояние связи с физическим устройством',
+        type: 'in.text',
+        direction: 'in',
+        val: isDeviceOnline.value ? 'online' : 'offline',
+        unit: '',
+        virtual: true,
+        haPublished: false
+      }
+    ]
+
+    // Служебные параметры платы можно включать в виртуальное устройство
+    // тем же способом, что и обычные физические параметры.
+    const serviceDefinitions = [
+      { label: 'Время работы', match: code => /(^millis$|status\.uptime|run[_ .]?time|uptime)/i.test(code) },
+      { label: 'Качество связи', match: code => /(^rssi$|wifi.*rssi|signal)/i.test(code) },
+      { label: 'Приоритет сети', match: code => /network[_ .]?priority/i.test(code) },
+      { label: 'Состояние синхронизации', match: code => /sync|connection[_ .]?status/i.test(code) },
+      { label: 'Версия прошивки', match: code => /firmware|fw[_ .]?version|software[_ .]?version/i.test(code) },
+      { label: 'Имя конфигурации', match: code => /config(?:uration)?[_ .]?name/i.test(code) },
+      { label: 'Хеш конфигурации', match: code => /config(?:uration)?.*(hash|checksum)|config[_ .]?hash/i.test(code) }
+    ]
+    const allDevicePorts = []
+    deviceData.value.forEach(item => {
+      if (Array.isArray(item.data)) allDevicePorts.push(...item.data)
+      else if (item.code) allDevicePorts.push(item)
+    })
+    // Канонический набор одинаков для любой платы: по одному пункту на лейбл,
+    // первый подходящий физический код становится источником данных.
+    const addedServiceLabels = new Set()
+    serviceDefinitions.forEach(definition => {
+      if (addedServiceLabels.has(definition.label)) return
+      const port = allDevicePorts.find(item => definition.match(String(item.code || '')))
+      if (!port) return
+      addedServiceLabels.add(definition.label)
+      virtualPorts.push({
+        ...port,
+        id: `virtual-service-${definition.label}`,
+        // Отдельный префикс, чтобы состояние чекбокса в «Виртуальном
+        // представлении» не делилось со стором реального физического порта.
+        code: `virtual-service:${port.code}`,
+        physical_code: port.code,
+        title: definition.label,
+        description: `Служебный параметр платы: ${port.code}`,
+        virtual: true,
+        virtual_service: true,
+        ha: port.ha || { ha_published: false, entity_id: '' },
+        haPublished: port.ha?.ha_published || false
+      })
+    })
+
+    result.unshift({
+      title: 'Виртуальное представление',
+      items: virtualPorts,
+      hasSubgroups: false,
+      tpl: 'default',
+      type: 'virtual',
+      haPublished: true
+    })
+  }
+
   return result
 })
+
+const visibleProcessedGroups = computed(() => {
+  const query = virtualFilter.value.trim().toLowerCase()
+  if (!virtualConfigMode.value || (!query && !hideVirtualPublished.value)) {
+    return processedGroups.value
+  }
+
+  return processedGroups.value
+    .map(group => ({
+      ...group,
+      items: (group.items || []).filter(port => {
+        const name = `${port.title || ''} ${port.name || ''} ${port.code || ''}`.toLowerCase()
+        const isPublished = Boolean(
+          port.ha?.ha_published || port.haPublished || port.published || port.virtual_status === 'used'
+        )
+        return (!query || name.includes(query)) && (!hideVirtualPublished.value || !isPublished)
+      })
+    }))
+    .filter(group => group.type === 'file_list' || group.items.length > 0)
+})
+
+function getPortTitle(item) {
+  if (item.title || item.name || item.label) {
+    return item.title || item.name || item.label
+  }
+  const code = String(item.code || '')
+  const parts = code.split('.')
+  const suffix = parts[parts.length - 1]
+  if (suffix && /^\d+$/.test(suffix)) {
+    return `${parts.slice(0, -1).join(' · ')} · Канал ${Number(suffix) + 1}`
+  }
+  return code || 'Без названия'
+}
 
 // Функции для управления сворачиванием
 const toggleGroup = (groupTitle) => {
@@ -933,20 +1796,21 @@ const handleViewModeChange = (groupTitle, mode) => {
   console.log(`Group ${groupTitle} view mode changed to: ${mode}`)
 }
 
-const handlePortUpdate = (code, value) => {
+const handlePortUpdate = async (code, value) => {
   try {
-    // Отправляем команду на устройство через WebSocket
-    const command = {
-      type: 'device_command',
-      device_id: props.device.id,
-      code: code,
-      value: value
+    // Команда идёт через backend API: он нормализует 0/1 в 0/255 для
+    // digital-портов и возвращает явный результат отправки на плату.
+    const response = await secureFetch(`/api/myhome/device/${props.device.id}/command`, {
+      method: 'POST',
+      body: {code, value}
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      console.error('Device command was not sent:', error.error || response.status)
     }
 
-    webSocketService.send(JSON.stringify(command))
-
   } catch (error) {
-    console.error('Error sending command via WebSocket:', error)
+    console.error('Error sending command to device:', error)
   }
 }
 
@@ -1218,6 +2082,26 @@ const viewBackupLog = async () => {
   }
 }
 
+const deleteBackup = async (timestamp) => {
+  if (!confirm(`Удалить бэкап от «${formatTimestamp(timestamp)}»?`)) return
+
+  try {
+    const response = await secureFetch(`/api/devices/${props.device.id}/backup/${encodeURIComponent(timestamp)}`, {
+      method: 'DELETE'
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || result.success === false) {
+      throw new Error(result.detail || result.error || 'Не удалось удалить бэкап')
+    }
+
+    showNotification(result.backup_deleted ? 'Бэкап удалён' : 'Запись из журнала удалена', 'success')
+    await loadBackupHistory()
+  } catch (error) {
+    console.error('Error deleting backup:', error)
+    showNotification(error.message || 'Ошибка удаления бэкапа', 'error')
+  }
+}
+
 // Функция показа уведомлений
 const showNotification = (text, color = 'success') => {
   snackbarText.value = text
@@ -1253,12 +2137,31 @@ const copyDeviceIP = async () => {
   }
 }
 
+const deleteDevice = async () => {
+  if (!confirm(`Удалить устройство «${props.device.name}»?`)) return
+
+  try {
+    const response = await secureFetch(`/api/myhome/device/${props.device.id}`, {
+      method: 'DELETE'
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error || 'Не удалось удалить устройство')
+    }
+    messageStore.showSuccess('Устройство удалено')
+    emit('deleted', props.device.id)
+  } catch (error) {
+    console.error('Error deleting device:', error)
+    messageStore.showError(error.message || 'Ошибка удаления устройства')
+  }
+}
+
 // Принудительная загрузка данных устройства
 const refreshDeviceData = async () => {
   refreshingDeviceData.value = true
   try {
-    // Загружаем данные с устройства
-    await loadDeviceData()
+    // Перечитываем физическую конфигурацию и показываем diff.
+    const refreshResult = await loadDeviceData(true)
     
     // Запрашиваем обновленные данные устройства из базы
     const response = await secureFetch(`/api/devices/${props.device.id}`)
@@ -1268,7 +2171,11 @@ const refreshDeviceData = async () => {
       localDeviceData.value = updatedDevice
       // Эмитим событие для обновления родительского компонента
       emit('device-updated', updatedDevice)
-      messageStore.showSuccess('Данные устройства обновлены')
+      messageStore.showSuccess(
+        refreshResult?.changes?.has_changes
+          ? 'Порты обновлены. Найдены изменения конфигурации.'
+          : 'Порты обновлены, изменений не найдено.'
+      )
       showDeviceUpdate()
     }
   } catch (error) {
@@ -1277,6 +2184,12 @@ const refreshDeviceData = async () => {
   } finally {
     refreshingDeviceData.value = false
   }
+}
+
+const openHAIntegrationAfterPortRefresh = () => {
+  showPortChangesDialog.value = false
+  showDetailsModal.value = true
+  detailsTab.value = 'ports'
 }
 
 const loadingDeviceInfo = ref(false)
@@ -1429,7 +2342,7 @@ const handleUpdateFavoritePorts = async (favoritePorts) => {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(favoritePorts)
+      body: JSON.stringify({ favorite_ports: favoritePorts })
     })
 
     if (response.ok) {
@@ -1466,18 +2379,214 @@ const handleUpdateLogsConfig = async (config) => {
   min-width: 300px; /* Минимальная ширина для лучшего отображения портов */
 }
 
-.device-id-chip {
+/* ============ Новая шапка карточки устройства ============ */
+.device-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 10px 15px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--v-theme-primary), 0.08) 0%,
+    rgba(var(--v-theme-primary), 0.03) 100%
+  );
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+  position: relative;
+}
+
+.device-header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: rgb(var(--v-theme-success));
+  transition: background-color 0.2s ease;
+}
+
+.device-header--offline::before {
+  background: rgb(var(--v-theme-error));
+}
+
+.device-header--offline {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--v-theme-error), 0.08) 0%,
+    rgba(var(--v-theme-error), 0.02) 100%
+  );
+}
+
+.device-header__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.device-header__row--identity {
+  min-height: 32px;
+}
+
+.device-header__row--status {
+  min-height: 28px;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* --- Левая часть первой строки: иконка + имя + id --- */
+.device-header__identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.device-header__chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
+  flex-shrink: 0;
+}
+
+.device-header__name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-header__id {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-info, 33, 150, 243), 0.12);
+  color: rgb(var(--v-theme-info));
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
   cursor: pointer;
-  user-select: none;
-  transition: background-color 0.2s;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
-.device-id-chip:hover {
-  background-color: rgba(33, 150, 243, 0.2) !important;
+.device-header__id:hover {
+  background: rgba(var(--v-theme-info, 33, 150, 243), 0.22);
 }
 
-.info-line {
-  background-color: #f8f9fa;
+.device-header__pulse {
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+/* --- Правая часть первой строки: кнопки действий --- */
+.device-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* --- Статусные чипы --- */
+.device-header__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.device-status-chip {
+  white-space: nowrap;
+}
+
+.device-ha-badge {
+  margin-right: 8px; /* чтобы «1»-бейдж не наезжал на соседа */
+}
+
+.device-ha-badge :deep(.v-badge__badge) {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+/* --- Метрики (бэкап / логи) и кнопка «Детали» --- */
+.device-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.device-header__metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: transparent;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.device-header__metric:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.device-header__metric:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.device-header__metric--success { color: rgb(var(--v-theme-success)); border-color: rgba(var(--v-theme-success), 0.35); }
+.device-header__metric--warning { color: rgb(var(--v-theme-warning)); border-color: rgba(var(--v-theme-warning), 0.35); }
+.device-header__metric--error   { color: rgb(var(--v-theme-error));   border-color: rgba(var(--v-theme-error), 0.35); }
+.device-header__metric--grey    { color: rgba(var(--v-theme-on-surface), 0.55); }
+
+.device-header__details {
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .device-header {
+    padding: 8px 10px;
+  }
+  .device-header__name {
+    font-size: 0.9rem;
+  }
+  .device-header__meta {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 .backup-history {
@@ -1663,6 +2772,10 @@ const handleUpdateLogsConfig = async (config) => {
 
 /* Адаптивные стили для мобильных устройств */
 @media (max-width: 600px) {
+  .device-toolbar {
+    min-height: 64px;
+  }
+
   .device-card {
     max-height: 500px;
   }
@@ -1726,6 +2839,39 @@ const handleUpdateLogsConfig = async (config) => {
 
 .badge-number{
   margin: -25px 0 0 4px;
+}
+
+.virtual-selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 152, 0, 0.45);
+  border-radius: 4px;
+  background: rgba(255, 152, 0, 0.06);
+}
+
+.virtual-filter {
+  flex: 1 1 180px;
+  max-width: 260px;
+}
+
+.virtual-selection-toolbar :deep(.v-selection-control) {
+  min-height: 32px;
+}
+
+.virtual-port-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.virtual-port-settings {
+  padding: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.02);
 }
 
 /* Адаптивные стили для устройств */

@@ -64,6 +64,7 @@ const toggleValue = (event) => {
 .compact-digital-port {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   min-width: 60px;
 }
 
@@ -98,13 +99,12 @@ const toggleValue = (event) => {
 
 /* Стили для переключателя (выходные порты) */
 .digital-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
   font-size: 0.85em;
-  min-width: 80px;
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .toggle-input {

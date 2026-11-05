@@ -1,0 +1,135 @@
+# MY HOME Link — HA-side virtual test components.
+# This package is intentionally independent from MQTT and physical ESP devices.
+
+input_select:
+  my_home_link_mode:
+    name: MY HOME Link mode
+    icon: mdi:link-variant
+    options:
+      - disabled
+      - virtual
+      - physical
+    initial: disabled
+
+  my_home_link_quality:
+    name: MY HOME Link quality
+    icon: mdi:signal
+    options:
+      - unknown
+      - good
+      - degraded
+      - stale
+      - timeout
+      - invalid
+      - offline
+    initial: unknown
+
+  my_home_link_feedback_state:
+    name: MY HOME Link feedback state
+    icon: mdi:connection
+    options:
+      - unknown
+      - online
+      - stale
+      - timeout
+      - offline
+    initial: unknown
+
+input_boolean:
+  my_home_link_ok:
+    name: MY HOME Link floor heating OK
+    icon: mdi:check-circle-outline
+    initial: false
+
+  my_home_link_boiler_enable:
+    name: MY HOME Link boiler enable request
+    icon: mdi:fire
+    initial: false
+
+  my_home_link_turbo:
+    name: MY HOME Link turbo request
+    icon: mdi:rocket-launch-outline
+    initial: false
+
+  my_home_link_boiler_ready:
+    name: MY HOME Link boiler ready
+    icon: mdi:check-network-outline
+    initial: false
+
+input_number:
+  my_home_link_boiler_temperature:
+    name: MY HOME Link required supply temperature
+    icon: mdi:thermometer-chevron-up
+    min: 25
+    max: 50
+    step: 0.5
+    mode: box
+    unit_of_measurement: °C
+    initial: 25
+
+  my_home_link_demand_percent:
+    name: MY HOME Link demand
+    icon: mdi:percent
+    min: 0
+    max: 100
+    step: 1
+    mode: slider
+    unit_of_measurement: "%"
+    initial: 0
+
+  my_home_link_supply:
+    name: MY HOME Link virtual supply temperature
+    icon: mdi:thermometer
+    min: 0
+    max: 100
+    step: 0.5
+    mode: box
+    unit_of_measurement: °C
+    initial: 0
+
+  my_home_link_last_update_age:
+    name: MY HOME Link last update age
+    icon: mdi:clock-outline
+    min: 0
+    max: 86400
+    step: 1
+    mode: box
+    unit_of_measurement: s
+    initial: 0
+
+input_text:
+  my_home_link_error:
+    name: MY HOME Link connection error
+    icon: mdi:alert-circle-outline
+    max: 255
+    initial: ""
+
+template:
+  - sensor:
+      - name: MY HOME Link virtual boiler state
+        unique_id: my_home_link_virtual_boiler_state
+        icon: mdi:water-boiler
+        state: >-
+          {% if is_state('input_select.my_home_link_mode', 'disabled') %}
+            disabled
+          {% elif is_state('input_select.my_home_link_feedback_state', 'timeout') %}
+            timeout
+          {% elif is_state('input_select.my_home_link_feedback_state', 'offline') %}
+            offline
+          {% elif is_state('input_boolean.my_home_link_boiler_ready', 'on') %}
+            ready
+          {% else %}
+            waiting
+          {% endif %}
+        attributes:
+          virtual: true
+          physical_outputs_protected: true
+          link_id: floor-to-boiler
+
+      - name: MY HOME Link direction summary
+        unique_id: my_home_link_direction_summary
+        icon: mdi:arrow-left-right
+        state: HA / floor_heating ↔ ESP / boiler_ctrl
+        attributes:
+          request_direction: HA / floor_heating → ESP / boiler_ctrl
+          feedback_direction: ESP / boiler_ctrl → HA / floor_heating

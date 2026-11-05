@@ -20,13 +20,29 @@
         <template #activator="{ props: tooltipProps }">
           <div v-bind="tooltipProps" class="d-flex align-center">
             <v-icon
+              :icon="isFavorite ? 'mdi-star' : 'mdi-star-outline'"
+              size="16"
+              :color="isFavorite ? 'amber' : 'grey'"
+              class="me-1 favorite-icon"
+              title="Избранное"
+              @click.stop="$emit('favorite-toggle', port)"
+            ></v-icon>
+            <v-icon
+              v-if="isVirtualLinked"
+              icon="mdi-link-variant"
+              size="14"
+              color="purple"
+              class="me-1"
+              title="Связан с виртуальным портом"
+            ></v-icon>
+            <v-icon
               :icon="portTypeIcon"
               size="16"
               :color="portTypeColor"
               class="me-2"
             ></v-icon>
             <span>{{ port.title || port.name || port.code }}</span>
-            
+
             <!-- HA индикатор -->
             <v-chip
               v-if="port.ha?.ha_published"
@@ -43,15 +59,17 @@
         {{ port.description || port.code }}
       </v-tooltip>
     </td>
-    
+
     <!-- Элемент управления вместо текстового значения -->
     <td class="text-right control-cell">
-      <component
-        :is="compactPortComponent"
-        :port="port"
-        :value="currentValue"
-        @update="handlePortUpdate"
-      />
+      <div class="d-flex justify-end">
+        <component
+          :is="compactPortComponent"
+          :port="port"
+          :value="currentValue"
+          @update="handlePortUpdate"
+        />
+      </div>
     </td>
     
     <!-- Индикатор обновления значения -->
@@ -81,6 +99,22 @@
               ></v-checkbox>
             </div>
             
+            <v-icon
+              :icon="isFavorite ? 'mdi-star' : 'mdi-star-outline'"
+              size="16"
+              :color="isFavorite ? 'amber' : 'grey'"
+              class="me-1 favorite-icon"
+              title="Избранное"
+              @click.stop="$emit('favorite-toggle', port)"
+            ></v-icon>
+            <v-icon
+              v-if="isVirtualLinked"
+              icon="mdi-link-variant"
+              size="14"
+              color="purple"
+              class="me-1"
+              title="Связан с виртуальным портом"
+            ></v-icon>
             <v-icon
               :icon="portTypeIcon"
               size="16"
@@ -161,10 +195,18 @@ const props = defineProps({
   hasPendingChanges: {
     type: Boolean,
     default: false
+  },
+  isFavorite: {
+    type: Boolean,
+    default: false
+  },
+  isVirtualLinked: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['update', 'edit', 'ha-toggle'])
+const emit = defineEmits(['update', 'edit', 'ha-toggle', 'favorite-toggle'])
 
 // Computed properties
 const isMobileView = computed(() => {
@@ -294,6 +336,16 @@ const handlePortUpdate = (code, value) => {
 .control-cell {
   min-width: 120px;
   padding: 8px 12px;
+  text-align: right;
+}
+
+.favorite-icon {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.favorite-icon:hover {
+  transform: scale(1.2);
 }
 
 .update-indicator-wrapper {

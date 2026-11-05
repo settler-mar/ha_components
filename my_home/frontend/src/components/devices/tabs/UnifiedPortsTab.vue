@@ -1,8 +1,8 @@
 <template>
   <div class="unified-ports-tab">
     <!-- Фильтры -->
-    <div class="mb-4">
-      <v-row>
+    <div class="mb-2">
+      <v-row dense>
         <v-col cols="12" md="3">
           <v-text-field
             v-model="searchQuery"
@@ -57,59 +57,56 @@
     </div>
 
     <!-- Настройки логирования в шапке -->
-    <v-card variant="outlined" class="mb-4" v-if="logsConfigData">
-      <v-card-title class="text-subtitle-1">
-        <v-icon class="me-2">mdi-file-document-multiple</v-icon>
-        Настройки логирования
+    <v-card variant="outlined" class="mb-2 logging-settings" v-if="logsConfigData">
+      <div class="d-flex align-center flex-wrap gap-3 px-3 py-2">
+        <div class="d-flex align-center">
+          <v-icon size="18" class="me-2">mdi-file-document-multiple</v-icon>
+          <span class="font-weight-medium">Логирование</span>
+        </div>
+
+        <div class="d-flex align-center flex-wrap gap-1">
+          <v-chip
+            v-for="file in logsConfigData.files || []"
+            :key="file"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+          >{{ file.replace('/logs/', '') }}</v-chip>
+        </div>
+
         <v-spacer></v-spacer>
-        <v-btn 
-          @click="refreshLogsConfig" 
+
+        <v-checkbox
+          v-model="localLoggingSettings.enableLogging"
+          label="Включено"
+          density="compact"
+          hide-details
+        ></v-checkbox>
+        <v-checkbox
+          v-model="localLoggingSettings.saveLocally"
+          label="Локально"
+          density="compact"
+          hide-details
+        ></v-checkbox>
+
+        <v-btn
+          @click="refreshLogsConfig"
           :loading="loadingConfig"
           size="small"
           variant="text"
-          prepend-icon="mdi-refresh"
-        >
-          Обновить
-        </v-btn>
-      </v-card-title>
-      
-      <v-card-text>
-        <v-row>
-          <v-col cols="12" md="4">
-            <div class="text-body-2 mb-2">
-              <strong>Файлы логов:</strong>
-              <div v-for="file in logsConfigData.files || []" :key="file" class="ms-2">
-                {{ file }}
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-checkbox
-              v-model="localLoggingSettings.enableLogging"
-              label="Включить логирование"
-              density="compact"
-              hide-details
-            ></v-checkbox>
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-checkbox
-              v-model="localLoggingSettings.saveLocally"
-              label="Сохранять локально"
-              density="compact"
-              hide-details
-            ></v-checkbox>
-          </v-col>
-        </v-row>
-      </v-card-text>
+          icon="mdi-refresh"
+          title="Обновить конфигурацию с устройства"
+        ></v-btn>
+      </div>
     </v-card>
 
     <!-- Таблица портов по группам -->
-    <div v-for="group in filteredGroups" :key="group.title" class="mb-4">
+    <div v-for="group in filteredGroups" :key="group.title" class="mb-2">
       <v-card variant="outlined">
         <!-- Заголовок группы -->
         <v-card-title 
           @click="toggleGroupCollapse(group.title)"
-          class="group-header cursor-pointer"
+          class="group-header cursor-pointer py-1 px-3"
         >
           <div class="d-flex align-center">
             <v-icon 
@@ -118,148 +115,148 @@
               class="me-2"
             ></v-icon>
             
-            <v-icon :icon="getGroupIcon(group)" class="me-2"></v-icon>
-            
+            <v-icon :icon="getGroupIcon(group)" size="20" class="me-2"></v-icon>
+
             <span class="font-weight-medium">{{ group.title }}</span>
-            
+
             <v-chip size="x-small" color="primary" variant="outlined" class="ms-2">
               {{ group.ports.length }}
             </v-chip>
+
+            <v-icon
+              v-if="group.ports.length && group.ports.every(isFavorite)"
+              icon="mdi-star"
+              color="amber"
+              size="16"
+              class="ms-1"
+              title="Вся группа в избранном"
+            ></v-icon>
+
+            <v-icon
+              v-if="group.ports.length && group.ports.every(isVirtualLinked)"
+              icon="mdi-link-variant"
+              color="purple"
+              size="16"
+              class="ms-1"
+              title="Вся группа связана с виртуальными портами"
+            ></v-icon>
           </div>
         </v-card-title>
         
         <!-- Таблица портов группы -->
         <v-expand-transition>
           <div v-show="!isGroupCollapsed(group.title)">
-            <v-table density="compact">
+            <v-table density="compact" class="ports-compact-table">
               <thead>
                 <tr>
-                  <th class="text-left">Порт</th>
-                  <th class="text-center">Параметры</th>
-                  <th class="text-center">Избранное</th>
-                  <th class="text-center">HA</th>
-                  <th class="text-center">Логирование</th>
+                  <th style="width: 34px;"></th>
+                  <th style="width: 28px;"></th>
+                  <th class="text-left">Название</th>
+                  <th class="text-left" style="width: 150px;">Код · тип</th>
+                  <th class="text-right" style="width: 110px;">Значение</th>
+                  <th class="text-left" style="width: 80px;">Ед.</th>
+                  <th class="text-center" style="width: 160px;">Логирование</th>
+                  <th style="width: 40px;"></th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="port in group.ports" :key="port.code" class="port-row">
-                  <!-- Информация о порте -->
-                  <td class="port-info-cell">
-                    <div class="d-flex align-center">
-                      <v-icon :color="getPortIconColor(port)" class="me-2">{{ getPortIcon(port) }}</v-icon>
-                      <div>
-                        <div class="font-weight-medium">{{ port.title || port.name || port.code }}</div>
-                        <div class="text-body-2 text-grey">
-                          {{ port.code }}
-                          <v-chip size="x-small" :color="getPortTypeColor(port.type)" class="ms-1">
-                            {{ port.type }}
-                          </v-chip>
-                          <span v-if="port.val !== undefined" class="ms-1">
-                            = {{ port.val }}{{ port.unit ? ` ${port.unit}` : '' }}
-                          </span>
-                        </div>
-                        <!-- Статус логирования -->
-                        <div v-if="getPortLogInfo(port)" class="text-caption text-success mt-1">
-                          📝 Логируется в: {{ getPortLogInfo(port).fileName }}
-                          <span v-if="getPortLogInfo(port).saveLocally" class="text-primary">+ локально</span>
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  
-                  <!-- Параметры (основные + кнопка дополнительных) -->
-                  <td class="text-center">
-                    <div class="d-flex flex-column align-center gap-1">
-                      <v-text-field
-                        :model-value="port.title"
-                        @update:model-value="updatePortParam(port, 'title', $event)"
-                        placeholder="Название"
-                        variant="outlined"
-                        density="compact"
-                        hide-details
-                        class="compact-input"
-                      ></v-text-field>
-                      <v-text-field
-                        :model-value="port.unit"
-                        @update:model-value="updatePortParam(port, 'unit', $event)"
-                        placeholder="Ед."
-                        variant="outlined"
-                        density="compact"
-                        hide-details
-                        class="compact-input-small"
-                      ></v-text-field>
-                      <v-btn
-                        @click="editPortAdvanced(port)"
-                        icon="mdi-dots-horizontal"
-                        size="x-small"
-                        variant="text"
-                        class="mt-1"
-                      ></v-btn>
-                    </div>
-                  </td>
-                  
                   <!-- Избранное -->
                   <td class="text-center">
-                    <v-btn
+                    <v-icon
+                      :icon="isFavorite(port) ? 'mdi-star' : 'mdi-star-outline'"
+                      :color="isFavorite(port) ? 'amber' : 'grey-lighten-1'"
+                      size="18"
+                      class="favorite-icon"
                       @click="toggleFavorite(port)"
-                      :icon="isFavorite(port) ? 'mdi-heart' : 'mdi-heart-outline'"
-                      size="small"
-                      variant="text"
-                      :color="isFavorite(port) ? 'red' : 'grey'"
-                    ></v-btn>
+                    ></v-icon>
                   </td>
-                  
-                  <!-- HA публикация -->
+
+                  <!-- Иконка типа + индикатор виртуального -->
                   <td class="text-center">
-                    <div class="d-flex flex-column align-center gap-1">
-                      <v-btn
-                        @click="toggleHA(port)"
-                        :icon="isPublishedToHA(port) ? 'mdi-home-assistant' : 'mdi-home-outline'"
-                        size="small"
-                        variant="text"
-                        :color="isPublishedToHA(port) ? 'orange' : 'grey'"
-                      ></v-btn>
-                      <v-text-field
-                        v-if="isPublishedToHA(port)"
-                        :model-value="getHAName(port)"
-                        @update:model-value="updateHAName(port, $event)"
-                        placeholder="Название"
-                        variant="outlined"
-                        density="compact"
-                        hide-details
-                        class="compact-input"
-                      ></v-text-field>
-                      <v-btn
-                        v-if="isPublishedToHA(port)"
-                        @click="configureHA(port)"
-                        icon="mdi-cog"
-                        size="x-small"
-                        variant="text"
-                        color="orange"
-                      ></v-btn>
+                    <v-tooltip location="top" :text="isVirtualLinked(port) ? 'Связан с виртуальным портом' : port.type || ''">
+                      <template #activator="{ props: tp }">
+                        <v-icon
+                          v-bind="tp"
+                          :color="isVirtualLinked(port) ? 'purple' : getPortIconColor(port)"
+                          size="18"
+                        >{{ isVirtualLinked(port) ? 'mdi-link-variant' : getPortIcon(port) }}</v-icon>
+                      </template>
+                    </v-tooltip>
+                  </td>
+
+                  <!-- Название (inline edit) -->
+                  <td>
+                    <v-text-field
+                      :model-value="port.title"
+                      @update:model-value="updatePortParam(port, 'title', $event)"
+                      :placeholder="port.name || port.code"
+                      variant="plain"
+                      density="compact"
+                      hide-details
+                      single-line
+                      class="inline-input inline-input--title"
+                    ></v-text-field>
+                  </td>
+
+                  <!-- Код + тип -->
+                  <td>
+                    <div class="d-flex align-center">
+                      <span class="text-caption text-grey text-truncate">{{ port.code }}</span>
+                      <v-chip size="x-small" :color="getPortTypeColor(port.type)" variant="tonal" class="ms-1">
+                        {{ port.type }}
+                      </v-chip>
                     </div>
                   </td>
-                  
+
+                  <!-- Значение (read-only) -->
+                  <td class="text-right">
+                    <span v-if="port.val !== undefined && port.val !== null" class="port-value">
+                      {{ port.val }}
+                    </span>
+                    <span v-else class="text-grey">—</span>
+                  </td>
+
+                  <!-- Единица (inline edit) -->
+                  <td>
+                    <v-text-field
+                      :model-value="port.unit"
+                      @update:model-value="updatePortParam(port, 'unit', $event)"
+                      placeholder="—"
+                      variant="plain"
+                      density="compact"
+                      hide-details
+                      single-line
+                      class="inline-input inline-input--unit"
+                    ></v-text-field>
+                  </td>
+
                   <!-- Логирование -->
                   <td class="text-center">
-                    <div v-if="getPortLogInfo(port)" class="d-flex flex-column align-center gap-1">
+                    <div v-if="getPortLogInfo(port)" class="d-flex align-center justify-center gap-1">
                       <v-checkbox
                         :model-value="getPortLogInfo(port).enabled"
                         @update:model-value="togglePortLogging(port, $event)"
                         hide-details
                         density="compact"
-                        :label="getPortLogInfo(port).fileName"
+                        class="log-check"
                       ></v-checkbox>
-                      <v-checkbox
-                        :model-value="getPortLogInfo(port).saveLocally"
-                        @update:model-value="togglePortLocalSave(port, $event)"
-                        label="Локально"
-                        hide-details
-                        density="compact"
-                        class="text-caption"
-                      ></v-checkbox>
+                      <span class="text-caption text-grey text-truncate" :title="getPortLogInfo(port).fileName">
+                        {{ getPortLogInfo(port).fileName }}
+                      </span>
                     </div>
-                    <span v-else class="text-grey">-</span>
+                    <span v-else class="text-grey">—</span>
+                  </td>
+
+                  <!-- Расширенное редактирование -->
+                  <td class="text-center">
+                    <v-btn
+                      @click="editPortAdvanced(port)"
+                      icon="mdi-dots-horizontal"
+                      size="x-small"
+                      variant="text"
+                      title="Дополнительные параметры"
+                    ></v-btn>
                   </td>
                 </tr>
               </tbody>
@@ -379,66 +376,6 @@
               class="mb-3"
             ></v-textarea>
 
-            <!-- HA настройки в модалке -->
-            <v-divider class="my-4"></v-divider>
-            <h4 class="text-h6 mb-3">
-              <v-icon class="me-2">mdi-home-assistant</v-icon>
-              Настройки Home Assistant
-            </h4>
-            
-            <v-row>
-              <v-col cols="12">
-                <v-checkbox
-                  :model-value="isPublishedToHA(editingPort)"
-                  @update:model-value="toggleHA(editingPort)"
-                  label="Публиковать в Home Assistant"
-                  color="orange"
-                ></v-checkbox>
-              </v-col>
-            </v-row>
-
-            <div v-if="isPublishedToHA(editingPort)">
-              <v-row>
-                <v-col cols="12" md="6">
-                  <v-text-field
-                    v-model="editingPort.haName"
-                    label="Название в HA"
-                    variant="outlined"
-                    class="mb-3"
-                  ></v-text-field>
-                </v-col>
-                <v-col cols="12" md="6">
-                  <v-text-field
-                    v-model="editingPort.haPrefix"
-                    label="Префикс"
-                    variant="outlined"
-                    class="mb-3"
-                  ></v-text-field>
-                </v-col>
-              </v-row>
-
-              <v-row>
-                <v-col cols="12" md="6">
-                  <v-select
-                    v-model="editingPort.haDeviceClass"
-                    :items="deviceClassOptions"
-                    label="Класс устройства"
-                    variant="outlined"
-                    class="mb-3"
-                  ></v-select>
-                </v-col>
-                <v-col cols="12" md="6">
-                  <v-text-field
-                    v-model="editingPort.haIcon"
-                    label="Иконка"
-                    variant="outlined"
-                    class="mb-3"
-                    hint="Например: mdi-thermometer"
-                    persistent-hint
-                  ></v-text-field>
-                </v-col>
-              </v-row>
-            </div>
           </div>
         </v-card-text>
 
@@ -452,63 +389,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Диалог настройки HA -->
-    <v-dialog v-model="showHAConfigDialog" max-width="500px">
-      <v-card>
-        <v-card-title>
-          Настройка HA: {{ haConfigPort?.title || haConfigPort?.code }}
-        </v-card-title>
-        
-        <v-card-text>
-          <div v-if="haConfigPort">
-            <v-text-field
-              v-model="haConfig.name"
-              label="Название в HA"
-              variant="outlined"
-              class="mb-3"
-              hint="Как будет называться сущность в Home Assistant"
-              persistent-hint
-            ></v-text-field>
-
-            <v-text-field
-              v-model="haConfig.prefix"
-              label="Префикс"
-              variant="outlined"
-              class="mb-3"
-              hint="Префикс для entity_id"
-              persistent-hint
-            ></v-text-field>
-
-            <v-select
-              v-model="haConfig.deviceClass"
-              :items="deviceClassOptions"
-              label="Класс устройства"
-              variant="outlined"
-              class="mb-3"
-              hint="Класс устройства в Home Assistant"
-              persistent-hint
-            ></v-select>
-
-            <v-text-field
-              v-model="haConfig.icon"
-              label="Иконка"
-              variant="outlined"
-              class="mb-3"
-              hint="Иконка Material Design (например: mdi-thermometer)"
-              persistent-hint
-            ></v-text-field>
-          </div>
-        </v-card-text>
-
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn @click="showHAConfigDialog = false">Отмена</v-btn>
-          <v-btn @click="saveHAConfig" color="primary" :loading="savingHA">
-            Сохранить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 
@@ -705,6 +585,10 @@ const getPortTypeColor = (type) => {
 
 const isFavorite = (port) => {
   return favoritePorts.value.some(fav => fav.code === port.code)
+}
+
+const isVirtualLinked = (port) => {
+  return Array.isArray(port.virtual_usage) && port.virtual_usage.length > 0
 }
 
 const isPublishedToHA = (port) => {
@@ -1096,7 +980,7 @@ onMounted(async () => {
 
 <style scoped>
 .unified-ports-tab {
-  padding: 16px 0;
+  padding: 4px 0;
 }
 
 .gap-1 {
@@ -1138,34 +1022,91 @@ onMounted(async () => {
 
 .v-table td {
   vertical-align: top;
-  padding: 8px 12px;
+  padding: 4px 8px;
 }
 
-/* Компактные инпуты для таблицы */
-.compact-input {
-  max-width: 80px;
-}
-
-.compact-input-small {
-  max-width: 50px;
-}
-
-.compact-input :deep(.v-field) {
-  font-size: 0.75rem !important;
-}
-
-.compact-input :deep(.v-field__input) {
-  min-height: 28px !important;
+.v-table th {
+  white-space: nowrap;
   padding: 4px 8px !important;
+  font-size: 0.75rem;
 }
 
-.compact-input-small :deep(.v-field) {
-  font-size: 0.7rem !important;
+.compact-card :deep(.v-btn) {
+  min-width: 0;
 }
 
-.compact-input-small :deep(.v-field__input) {
-  min-height: 26px !important;
-  padding: 3px 6px !important;
+.compact-card :deep(.v-col) {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* Компактная таблица портов */
+.ports-compact-table :deep(td),
+.ports-compact-table :deep(th) {
+  padding: 2px 6px !important;
+  height: 34px !important;
+}
+
+.ports-compact-table :deep(th) {
+  font-size: 0.7rem;
+  color: rgba(0, 0, 0, 0.55);
+  font-weight: 500;
+}
+
+.inline-input :deep(.v-field__input) {
+  min-height: 24px !important;
+  padding: 0 4px !important;
+  font-size: 0.85rem;
+}
+
+.inline-input :deep(.v-field) {
+  background: transparent;
+  border-radius: 3px;
+  transition: background-color 0.15s ease;
+}
+
+.inline-input :deep(.v-field:hover) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.inline-input :deep(.v-field--focused) {
+  background: rgba(25, 118, 210, 0.06);
+  box-shadow: inset 0 -1px 0 rgba(25, 118, 210, 0.6);
+}
+
+.inline-input--title :deep(.v-field__input) {
+  font-weight: 500;
+}
+
+.inline-input--unit :deep(.v-field__input) {
+  text-align: center;
+}
+
+.port-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.favorite-icon {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.favorite-icon:hover {
+  transform: scale(1.2);
+}
+
+.log-check :deep(.v-selection-control) {
+  min-height: 20px !important;
+}
+
+.log-check :deep(.v-selection-control__wrapper) {
+  height: 20px !important;
+  width: 20px !important;
+}
+
+.port-row:hover {
+  background-color: rgba(25, 118, 210, 0.04);
 }
 
 /* Стили для чекбоксов в таблице */
@@ -1179,22 +1120,13 @@ onMounted(async () => {
 
 /* Адаптивные стили */
 @media (max-width: 768px) {
-  .port-info-cell {
-    min-width: 150px;
-  }
-  
-  .v-table td {
-    padding: 4px 6px;
-  }
-  
-  .compact-input :deep(.v-field__input) {
-    min-height: 24px !important;
+  .ports-compact-table :deep(td),
+  .ports-compact-table :deep(th) {
     padding: 2px 4px !important;
   }
-  
-  .compact-input-small :deep(.v-field__input) {
-    min-height: 22px !important;
-    padding: 1px 3px !important;
+
+  .inline-input :deep(.v-field__input) {
+    font-size: 0.8rem;
   }
 }
 </style>

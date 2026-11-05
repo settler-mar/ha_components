@@ -29,6 +29,9 @@
               <v-btn size="x-small" variant="outlined" @click="viewLatestFile(file)">
                 <v-icon size="10">mdi-eye</v-icon>
               </v-btn>
+              <v-btn size="x-small" variant="outlined" @click="openProtectionEditor(file)" class="ms-1">
+                <v-icon size="10">{{ isFileProtected(file.name) ? 'mdi-lock' : 'mdi-lock-outline' }}</v-icon>
+              </v-btn>
             </div>
           </div>
         </div>
@@ -222,8 +225,43 @@
         {{ selectedFile?.name }} - {{ formatTimestamp(selectedVersion?.timestamp) }}
       </v-card-title>
       
-      <v-card-text style="max-height: 500px;">
-        <pre class="file-content">{{ versionContent }}</pre>
+      <v-card-text style="max-height: 650px;">
+        <div v-if="structuredView" class="mb-2 d-flex justify-end">
+          <v-btn-toggle v-model="versionViewMode" mandatory density="compact" color="primary" variant="outlined">
+            <v-btn value="structured" size="small" prepend-icon="mdi-file-tree">Визуальный</v-btn>
+            <v-btn value="raw" size="small" prepend-icon="mdi-code-tags">Текст</v-btn>
+          </v-btn-toggle>
+        </div>
+        <div v-if="structuredView && versionViewMode === 'structured'" class="structured-view">
+          <div class="structured-toolbar">
+            <span class="text-caption text-medium-emphasis">Структурированный просмотр</span>
+            <v-chip size="x-small" color="info" variant="tonal">{{ structuredNodeCount }} полей</v-chip>
+            <v-btn size="x-small" variant="text" @click="expandStructuredView(true)">Развернуть</v-btn>
+            <v-btn size="x-small" variant="text" @click="expandStructuredView(false)">Свернуть</v-btn>
+          </div>
+          <div class="structured-tree">
+            <div v-for="node in visibleStructuredNodes" :key="node.id"
+                 class="structured-row" :class="[`kind-${structuredKind(node)}`, { 'is-container': node.isContainer }]"
+                 :style="{ paddingLeft: `${node.depth * 22 + 8}px` }">
+              <v-btn v-if="node.children.length" icon size="x-small" variant="text"
+                     @click="toggleStructuredNode(node.id)">
+                <v-icon size="18">{{ isStructuredExpanded(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+              </v-btn>
+              <span v-else class="tree-indent"></span>
+              <v-icon size="16" class="me-2 structured-icon">
+                {{ node.isArray ? 'mdi-code-brackets' : node.isContainer ? 'mdi-code-braces' : 'mdi-circle-small' }}
+              </v-icon>
+              <code class="structured-path">{{ node.label }}</code>
+              <v-chip size="x-small" variant="flat" class="ms-2 structured-type-chip">{{ node.typeLabel }}</v-chip>
+              <span v-if="!node.isContainer" class="structured-separator">:</span>
+              <span class="structured-value ms-2">{{ node.displayValue }}</span>
+              <v-icon v-if="isViewerProtected(node.path)" size="16" color="warning" class="ms-auto" title="Поле защищено">
+                mdi-lock
+              </v-icon>
+            </div>
+          </div>
+        </div>
+        <pre v-if="!structuredView || versionViewMode === 'raw'" class="file-content">{{ versionContent }}</pre>
       </v-card-text>
       
       <v-card-actions>
@@ -232,10 +270,102 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <!-- Визуальная настройка защищённых файлов и полей -->
+  <v-dialog v-model="showProtectionModal" max-width="900px" scrollable>
+    <v-card>
+      <v-card-title class="d-flex align-center">
+        <v-icon class="me-2">mdi-lock-outline</v-icon>
+        Защита конфигурации
+      </v-card-title>
+      <v-card-text>
+        <v-alert variant="tonal" type="info" class="mb-4">
+          Защищённые значения сравниваются с последней версией бэкапа. При изменении выполняется откат, причина записывается в журнал.
+        </v-alert>
+        <v-select v-model="protectionFileName" :items="configFiles" item-title="name" item-value="name"
+                  label="Файл конфигурации" variant="outlined" density="compact" />
+        <v-checkbox v-model="protectWholeFile" label="Защищать весь файл" color="primary" hide-details class="mb-2" />
+        <div v-if="!isJsonProtectionFile" class="text-body-2 text-medium-emphasis mb-3">
+          Для текстового файла доступна только защита целиком.
+        </div>
+        <div v-else class="protection-fields">
+          <div class="protection-toolbar">
+            <v-text-field
+              v-model="protectionSearch"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              placeholder="Поиск по пути или значению"
+              prepend-inner-icon="mdi-magnify"
+              class="protection-search"
+            />
+            <v-chip size="small" :color="protectedCount ? 'primary' : 'default'" variant="tonal">
+              Защищено: {{ protectedCount }} / {{ protectionFields.length }}
+            </v-chip>
+            <v-btn-toggle v-model="protectionFilter" density="compact" variant="outlined" mandatory>
+              <v-btn size="small" value="all">Все</v-btn>
+              <v-btn size="small" value="protected" prepend-icon="mdi-lock">Выбранные</v-btn>
+            </v-btn-toggle>
+            <v-btn size="small" variant="text" prepend-icon="mdi-check-all" @click="toggleProtectionAll(true)">Выбрать видимые</v-btn>
+            <v-btn size="small" variant="text" prepend-icon="mdi-close-box-multiple-outline" @click="toggleProtectionAll(false)">Снять видимые</v-btn>
+          </div>
+          <div class="protection-subheader">
+            Поля {{ protectionFileName.endsWith('.jsonl') ? 'JSONL' : 'JSON' }} · отметьте защищённые значения
+          </div>
+          <v-virtual-scroll
+            v-if="filteredProtectionFields.length"
+            :items="filteredProtectionFields"
+            :item-height="48"
+            height="420"
+            class="protection-scroll"
+          >
+            <template #default="{ item: field }">
+              <div
+                class="protection-row"
+                :class="{ 'is-protected': field.protected }"
+                @click="field.protected = !field.protected"
+              >
+                <v-checkbox
+                  :model-value="field.protected"
+                  color="primary"
+                  hide-details
+                  density="compact"
+                  class="me-2"
+                  @click.stop
+                  @update:model-value="val => field.protected = val"
+                />
+                <div class="protection-path-col" :style="{ paddingLeft: `${field.depth * 14}px` }">
+                  <div class="d-flex align-center">
+                    <v-icon size="15" class="me-1 protection-type-icon">{{ field.typeIcon }}</v-icon>
+                    <code class="protection-path">{{ field.path }}</code>
+                    <v-chip size="x-small" variant="flat" class="ms-2 protection-type-chip">{{ field.type }}</v-chip>
+                  </div>
+                  <div v-if="field.preview" class="protection-preview">{{ field.preview }}</div>
+                </div>
+                <v-icon v-if="field.protected" size="16" color="primary" class="ms-auto">mdi-lock</v-icon>
+              </div>
+            </template>
+          </v-virtual-scroll>
+          <div v-else class="text-medium-emphasis pa-4 text-center">
+            {{ protectionFields.length ? 'Нет полей по текущему фильтру' : 'В файле нет доступных JSON-полей' }}
+          </div>
+        </div>
+        <v-alert v-if="protectionMessage" :type="protectionMessageType" variant="tonal" class="mt-3">
+          {{ protectionMessage }}
+        </v-alert>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn @click="showProtectionModal = false">Отмена</v-btn>
+        <v-btn color="primary" :loading="protectionLoading" @click="saveProtectionPolicy">Сохранить</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup>
-import {ref, computed} from 'vue'
+import {ref, computed, watch, onMounted} from 'vue'
 import {secureFetch} from '@/services/fetch'
 
 const props = defineProps({
@@ -269,19 +399,69 @@ const selectedVersions = ref([])
 const versionContents = ref(['', ''])
 const selectedVersion = ref(null)
 const versionContent = ref('')
+const structuredView = ref(null)
+const versionViewMode = ref('structured')
+const structuredExpanded = ref({'$': true})
 
 // Данные для сравнения
 const highlightedContent = ref(['', ''])
 const diffInfo = ref(null)
+const showProtectionModal = ref(false)
+const protectionFileName = ref('')
+const protectionContent = ref('')
+const protectionFields = ref([])
+const protectionSearch = ref('')
+const protectionFilter = ref('all')
+const protectWholeFile = ref(false)
+const configPolicy = ref({version: 1, devices: {}})
+const protectionLoading = ref(false)
+const protectionMessage = ref('')
+const protectionMessageType = ref('info')
+
+const devicePolicyFiles = computed(() => configPolicy.value?.devices?.[String(props.deviceId)]?.files || {})
+const selectedProtectionRule = computed(() => devicePolicyFiles.value[protectionFileName.value] || {})
+const isJsonProtectionFile = computed(() => /\.(json|jsonl)$/i.test(protectionFileName.value))
+const protectedCount = computed(() => protectionFields.value.filter(f => f.protected).length)
+const filteredProtectionFields = computed(() => {
+  const q = (protectionSearch.value || '').trim().toLowerCase()
+  return protectionFields.value.filter(f => {
+    if (protectionFilter.value === 'protected' && !f.protected) return false
+    if (!q) return true
+    return f.path.toLowerCase().includes(q) || String(f.preview || '').toLowerCase().includes(q)
+  })
+})
+const toggleProtectionAll = value => {
+  const targets = filteredProtectionFields.value
+  targets.forEach(field => { field.protected = value })
+}
+const viewerFileRule = computed(() => devicePolicyFiles.value[selectedFile.value?.name] || {})
+const structuredNodeCount = computed(() => {
+  const count = nodes => nodes.reduce((total, node) => total + 1 + count(node.children), 0)
+  return structuredView.value ? count(structuredView.value) : 0
+})
+const visibleStructuredNodes = computed(() => {
+  const result = []
+  const append = nodes => nodes.forEach(node => {
+    result.push(node)
+    if (node.children.length && structuredExpanded.value[node.id]) append(node.children)
+  })
+  append(structuredView.value || [])
+  return result
+})
 
 // Сортируем историю - новые записи сверху
 const sortedBackupHistory = computed(() => {
   return [...props.backupHistory].sort((a, b) => {
-    const dateA = new Date(a.timestamp)
-    const dateB = new Date(b.timestamp)
+    const dateA = parseBackupTimestamp(a.timestamp)
+    const dateB = parseBackupTimestamp(b.timestamp)
     return dateB - dateA
   })
 })
+
+const parseBackupTimestamp = (timestamp) => {
+  const parsed = new Date(String(timestamp || '').replace('_', 'T'))
+  return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed
+}
 
 // Форматирование временной метки
 const formatTimestamp = (timestamp) => {
@@ -337,6 +517,191 @@ const loadConfigFiles = async () => {
   }
 }
 
+const loadConfigPolicy = async () => {
+  const response = await secureFetch('/api/diagnostics/config-policy')
+  const data = await response.json()
+  configPolicy.value = data.policy || {version: 1, devices: {}}
+}
+
+const previewValue = (value) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value)
+  return text.length > 100 ? `${text.slice(0, 100)}…` : text
+}
+
+const collectJsonFields = (value, path = '', result = []) => {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectJsonFields(item, `${path}.${index}`.replace(/^\./, ''), result))
+    if (!value.length && path) result.push({path, preview: '[]', protected: false,
+      depth: path.split('.').length - 1, type: 'массив', typeIcon: 'mdi-code-brackets'})
+    return result
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value)
+    if (!keys.length && path) result.push({path, preview: '{}', protected: false,
+      depth: path.split('.').length - 1, type: 'объект', typeIcon: 'mdi-code-braces'})
+    keys.forEach(key => collectJsonFields(value[key], path ? `${path}.${key}` : key, result))
+    return result
+  }
+  if (path) {
+    const type = structuredType(value)
+    result.push({path, preview: previewValue(value), protected: false,
+      depth: path.split('.').length - 1, type: type.label.split(' · ')[0], typeIcon: type.icon})
+  }
+  return result
+}
+
+const parseProtectionDocument = (content, fileName) => {
+  if (/\.jsonl$/i.test(fileName)) {
+    return content.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line))
+  }
+  return JSON.parse(content)
+}
+
+const structuredType = value => {
+  if (value === null) return {label: 'null', icon: 'mdi-null'}
+  if (Array.isArray(value)) return {label: `массив · ${value.length}`, icon: 'mdi-code-brackets'}
+  if (typeof value === 'object') return {label: `объект · ${Object.keys(value).length}`, icon: 'mdi-code-braces'}
+  return {label: typeof value, icon: typeof value === 'boolean' ? 'mdi-toggle-switch-outline' : 'mdi-circle-small'}
+}
+
+const buildStructuredNodes = (value, path = '$', label = 'корень', depth = 0) => {
+  const type = structuredType(value)
+  const isContainer = value !== null && typeof value === 'object'
+  const children = []
+  if (isContainer) {
+    const entries = Array.isArray(value)
+      ? value.map((item, index) => [String(index), item])
+      : Object.entries(value)
+    entries.forEach(([key, child]) => {
+      const childPath = path === '$' ? key : `${path}.${key}`
+      children.push(...buildStructuredNodes(child, childPath, key, depth + 1))
+    })
+  }
+  const displayValue = isContainer ? '' : typeof value === 'string' ? JSON.stringify(value) : String(value)
+  return [{id: path, path: path === '$' ? '' : path, label, depth, children,
+    isContainer, isArray: Array.isArray(value), typeLabel: type.label, typeIcon: type.icon, displayValue}]
+}
+
+const structuredKind = node => {
+  if (node.isArray) return 'array'
+  if (node.isContainer) return 'object'
+  const label = String(node.typeLabel || '').toLowerCase()
+  if (label.startsWith('string')) return 'string'
+  if (label.startsWith('number')) return 'number'
+  if (label.startsWith('boolean')) return 'boolean'
+  if (label.startsWith('null')) return 'null'
+  return 'other'
+}
+
+const isStructuredExpanded = id => Boolean(structuredExpanded.value[id])
+const toggleStructuredNode = id => { structuredExpanded.value[id] = !structuredExpanded.value[id] }
+const expandStructuredView = expanded => {
+  const next = {}
+  const visit = nodes => nodes.forEach(node => {
+    if (node.children.length) {
+      next[node.id] = expanded
+      visit(node.children)
+    }
+  })
+  visit(structuredView.value || [])
+  structuredExpanded.value = next
+}
+
+const prepareStructuredView = (content, fileName) => {
+  if (!/\.(json|jsonl)$/i.test(fileName)) {
+    structuredView.value = null
+    return
+  }
+  try {
+    const parsed = parseProtectionDocument(content, fileName)
+    structuredView.value = buildStructuredNodes(parsed)
+    structuredExpanded.value = {'$': true}
+    structuredView.value[0]?.children.forEach(node => { structuredExpanded.value[node.id] = true })
+  } catch {
+    structuredView.value = null
+  }
+}
+
+const isViewerProtected = path => Boolean(
+  viewerFileRule.value.protect_all || (path && viewerFileRule.value.keys?.includes(path))
+)
+
+const isFileProtected = (fileName) => {
+  const rule = devicePolicyFiles.value[fileName]
+  return Boolean(rule?.protect_all || rule?.keys?.length)
+}
+
+const openProtectionEditor = async (file) => {
+  protectionMessage.value = ''
+  protectionSearch.value = ''
+  protectionFilter.value = 'all'
+  protectionFileName.value = file.name
+  showProtectionModal.value = true
+  protectionLoading.value = true
+  try {
+    await loadConfigPolicy()
+    const response = await secureFetch(`/api/devices/${props.deviceId}/config/content/${file.name}`)
+    const data = await response.json()
+    protectionContent.value = data.success ? data.content : ''
+    const rule = selectedProtectionRule.value
+    protectWholeFile.value = Boolean(rule.protect_all)
+    let parsed = null
+    try { parsed = parseProtectionDocument(protectionContent.value, file.name) } catch { parsed = null }
+    const protectedKeys = new Set(rule.keys || [])
+    protectionFields.value = parsed === null ? [] : collectJsonFields(parsed).map(field => ({
+      ...field,
+      protected: protectedKeys.has(field.path),
+    }))
+  } catch (error) {
+    protectionMessageType.value = 'error'
+    protectionMessage.value = 'Не удалось загрузить содержимое файла или политику'
+  } finally {
+    protectionLoading.value = false
+  }
+}
+
+watch(protectionFileName, async (fileName, previous) => {
+  if (!showProtectionModal.value || !fileName || fileName === previous) return
+  const file = configFiles.value.find(item => item.name === fileName)
+  if (file) await openProtectionEditor(file)
+})
+
+const saveProtectionPolicy = async () => {
+  protectionLoading.value = true
+  protectionMessage.value = ''
+  try {
+    await loadConfigPolicy()
+    const policy = JSON.parse(JSON.stringify(configPolicy.value || {version: 1, devices: {}}))
+    policy.version = 1
+    policy.devices ||= {}
+    policy.devices[String(props.deviceId)] ||= {files: {}}
+    policy.devices[String(props.deviceId)].files ||= {}
+    const keys = protectionFields.value.filter(field => field.protected).map(field => field.path)
+    if (protectWholeFile.value || keys.length) {
+      policy.devices[String(props.deviceId)].files[protectionFileName.value] = {
+        protect_all: protectWholeFile.value,
+        keys: protectWholeFile.value ? [] : keys,
+      }
+    } else {
+      delete policy.devices[String(props.deviceId)].files[protectionFileName.value]
+    }
+    const response = await secureFetch('/api/diagnostics/config-policy', {method: 'PUT', data: policy})
+    const data = await response.json()
+    configPolicy.value = data.policy
+    protectionMessageType.value = 'success'
+    protectionMessage.value = 'Защита сохранена. Изменение записано в журнал.'
+  } catch (error) {
+    protectionMessageType.value = 'error'
+    protectionMessage.value = 'Не удалось сохранить защиту'
+  } finally {
+    protectionLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadConfigPolicy().catch(() => {})
+})
+
 // Просмотр истории файла
 const showFileHistory = async (file) => {
   selectedFile.value = file
@@ -385,6 +750,7 @@ const viewLatestFile = async (file) => {
         selectedFile.value = file
         selectedVersion.value = { timestamp: 'latest' }
         versionContent.value = data.content
+        prepareStructuredView(data.content, file.name)
         showVersionModal.value = true
       }
     }
@@ -844,6 +1210,7 @@ const viewConfigFile = async (filename, timestamp) => {
         selectedFile.value = { name: filename }
         selectedVersion.value = { timestamp }
         versionContent.value = data.content
+        prepareStructuredView(data.content, filename)
         showVersionModal.value = true
       }
     }
@@ -884,6 +1251,7 @@ const viewVersion = async (version) => {
       if (data.success) {
         selectedVersion.value = version
         versionContent.value = data.content
+        prepareStructuredView(data.content, selectedFile.value.name)
         showVersionModal.value = true
       }
     }
@@ -978,6 +1346,20 @@ const testHighlighting = () => {
   margin: 2px 0;
 }
 
+.field-list {
+  border: 1px solid #e0e0e0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.field-row {
+  border-bottom: 1px solid #eeeeee;
+}
+
+.field-row:last-child {
+  border-bottom: none;
+}
+
 .comparison-controls {
   border-top: 2px solid #e3f2fd;
   padding-top: 16px;
@@ -994,6 +1376,218 @@ const testHighlighting = () => {
   overflow-y: auto;
   white-space: pre-wrap;
   border: 1px solid #ddd;
+}
+
+.structured-view {
+  --sv-border: rgba(var(--v-border-color), 0.35);
+  --sv-row-alt: rgba(var(--v-theme-on-surface), 0.035);
+  --sv-row-hover: rgba(var(--v-theme-primary), 0.1);
+  --sv-key: rgb(var(--v-theme-on-surface));
+  --sv-string: #15803d;
+  --sv-number: #1d4ed8;
+  --sv-boolean: #b45309;
+  --sv-null: #94a3b8;
+  --sv-container: rgb(var(--v-theme-primary));
+  border: 1px solid var(--sv-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+}
+
+:root:not([data-theme="light"]) .structured-view,
+:root[data-theme="dark"] .structured-view {
+  --sv-string: #4ade80;
+  --sv-number: #60a5fa;
+  --sv-boolean: #fbbf24;
+  --sv-null: #94a3b8;
+}
+
+.structured-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(var(--v-theme-primary), 0.08);
+  border-bottom: 1px solid var(--sv-border);
+}
+
+.structured-tree {
+  max-height: 540px;
+  overflow: auto;
+  padding: 4px 0;
+  font-size: 13.5px;
+}
+
+.structured-row {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-right: 12px;
+  border-bottom: 1px solid var(--sv-border);
+  line-height: 1.35;
+}
+
+.structured-row:nth-child(even) {
+  background: var(--sv-row-alt);
+}
+
+.structured-row:hover {
+  background: var(--sv-row-hover);
+}
+
+.structured-row.is-container .structured-path {
+  color: var(--sv-container);
+  font-weight: 700;
+}
+
+.structured-icon {
+  color: var(--sv-null);
+}
+
+.is-container .structured-icon { color: var(--sv-container); }
+.kind-string .structured-icon { color: var(--sv-string); }
+.kind-number .structured-icon { color: var(--sv-number); }
+.kind-boolean .structured-icon { color: var(--sv-boolean); }
+
+.tree-indent {
+  width: 32px;
+  flex: 0 0 32px;
+}
+
+.structured-path {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sv-key);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.structured-type-chip {
+  font-weight: 500 !important;
+  font-size: 10.5px !important;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  background: rgba(var(--v-theme-on-surface), 0.08) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  opacity: 0.85;
+}
+
+.kind-string .structured-type-chip { background: rgba(21, 128, 61, 0.15) !important; color: var(--sv-string) !important; opacity: 1; }
+.kind-number .structured-type-chip { background: rgba(29, 78, 216, 0.15) !important; color: var(--sv-number) !important; opacity: 1; }
+.kind-boolean .structured-type-chip { background: rgba(180, 83, 9, 0.15) !important; color: var(--sv-boolean) !important; opacity: 1; }
+.is-container .structured-type-chip { background: rgba(var(--v-theme-primary), 0.15) !important; color: var(--sv-container) !important; opacity: 1; }
+
+.structured-separator {
+  margin-left: 6px;
+  color: rgb(var(--v-theme-on-surface));
+  opacity: 0.45;
+  font-weight: 600;
+}
+
+.structured-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.kind-string .structured-value { color: var(--sv-string); }
+.kind-number .structured-value { color: var(--sv-number); }
+.kind-boolean .structured-value { color: var(--sv-boolean); }
+.kind-null .structured-value { color: var(--sv-null); font-style: italic; }
+
+.protection-fields {
+  border: 1px solid rgba(var(--v-border-color), 0.35);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+}
+
+.protection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: rgba(var(--v-theme-primary), 0.06);
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.35);
+}
+
+.protection-search {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.protection-subheader {
+  padding: 8px 14px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--v-theme-on-surface));
+  opacity: 0.7;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.35);
+}
+
+.protection-scroll {
+  background: rgb(var(--v-theme-surface));
+}
+
+.protection-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  min-height: 48px;
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.25);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.protection-row:hover {
+  background: rgba(var(--v-theme-primary), 0.08);
+}
+
+.protection-row.is-protected {
+  background: rgba(var(--v-theme-primary), 0.1);
+}
+
+.protection-row.is-protected:hover {
+  background: rgba(var(--v-theme-primary), 0.16);
+}
+
+.protection-path-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.protection-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.protection-type-chip {
+  background: rgba(var(--v-theme-on-surface), 0.08) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  font-size: 10.5px !important;
+}
+
+.protection-type-icon { color: rgb(var(--v-theme-primary)); opacity: 0.8; }
+
+.protection-preview {
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: rgb(var(--v-theme-on-surface));
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .comparison-view .file-content {

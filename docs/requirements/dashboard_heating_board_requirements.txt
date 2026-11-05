@@ -1,0 +1,115 @@
+ПЛАТА 192.168.1.222
+====================
+
+ПЕРЕДАЁТ СЕЙЧАС
+
+my_485.dev10.temperature1
+MQTT: my_home/heating/nt38d01/10/temperature/1
+
+my_485.dev9.temperature1
+MQTT: my_home/heating/nt38d01/9/temperature/1
+
+my_485.dev8.temperature1
+MQTT: my_home/heating/nt38d01/8/temperature/1
+
+my_485.dev7.temperature1
+MQTT: my_home/heating/nt38d01/7/temperature/1
+
+my_485.dev6.temperature1
+MQTT: my_home/heating/nt38d01/6/temperature/1
+
+my_485.dev5.temperature1
+MQTT: my_home/heating/nt38d01/5/temperature/1
+
+my_485.dev4.temperature1
+MQTT: my_home/heating/nt38d01/4/temperature/1
+
+my_485.dev3.temperature1
+MQTT: my_home/heating/nt18b07/3/temperature/1
+
+my_485.dev3.temperature2
+MQTT: my_home/heating/nt18b07/3/temperature/2
+
+ДОЛЖНА ПЕРЕДАВАТЬ ДЛЯ DASHBOARD
+
+floor_heating.ok
+floor_heating.boiler_enable
+floor_heating.boiler_temperature
+floor_heating.demand_percent
+floor_heating.turbo
+floor_heating.quality
+boiler_ctrl.supply
+
+Для этих кодов MQTT-адреса сейчас отсутствуют.
+
+ОЖИДАЕМЫЕ ЗОНЫ ПЕРВОГО ЭТАЖА
+
+floor_heating.z0
+floor_heating.z1
+floor_heating.z2
+floor_heating.z3
+floor_heating.z4
+floor_heating.z5
+floor_heating.z6
+
+Сейчас в /values платы 192.168.1.222 эти коды отсутствуют.
+
+
+ПЛАТА 192.168.1.243
+====================
+
+ПЕРЕДАЁТ СЕЙЧАС
+
+my_485.dev6.temperature1
+MQTT: my_home/heating/nt18b07/6/temperature/1
+
+my_485.dev5.temperature1
+MQTT: my_home/heating/nt18b07/5/temperature/1
+
+my_485.dev2.temperature1
+MQTT: my_home/heating/nt18b07/2/temperature/1
+
+my_485.dev3.temperature1
+MQTT: my_home/heating/nt18b07/3/temperature/1
+
+my_485.dev3.temperature2
+MQTT: my_home/heating/nt18b07/3/temperature/2
+
+my_485.dev3.temperature3
+MQTT: my_home/heating/nt18b07/3/temperature/3
+
+my_485.dev3.temperature4
+MQTT: my_home/heating/nt18b07/3/temperature/4
+
+my_485.dev4.temperature1
+MQTT: my_home/heating/nt18b07/4/temperature/1
+
+my_485.dev4.temperature2
+MQTT: my_home/heating/nt18b07/4/temperature/2
+
+my_485.dev4.temperature3
+MQTT: my_home/heating/nt18b07/4/temperature/3
+
+ДОЛЖНА ПЕРЕДАВАТЬ ДЛЯ DASHBOARD
+
+floor_heating.ok
+floor_heating.boiler_enable
+floor_heating.boiler_temperature
+floor_heating.demand_percent
+floor_heating.turbo
+floor_heating.quality
+boiler_ctrl.supply
+
+Для этих кодов MQTT-адреса сейчас отсутствуют.
+
+ЗОНЫ ВТОРОГО ЭТАЖА
+
+floor_heating.z0
+floor_heating.z1
+floor_heating.z2
+floor_heating.z3
+floor_heating.z4
+floor_heating.z5
+floor_heating.z6
+
+Эти коды присутствуют в текущем /values платы 192.168.1.243.

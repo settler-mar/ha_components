@@ -1,32 +1,5 @@
 <template>
   <div>
-    <!-- Навигационное меню -->
-    <v-app-bar density="compact" elevation="1" class="mb-4">
-      <v-app-bar-title class="d-flex align-center">
-        <v-icon class="mr-2">mdi-home</v-icon>
-        My Home
-      </v-app-bar-title>
-
-      <v-spacer></v-spacer>
-
-      <v-btn
-        variant="text"
-        prepend-icon="mdi-cog-box"
-        @click="showConfigDialog = true"
-        class="mr-2"
-      >
-        Настройки
-      </v-btn>
-
-      <v-btn
-        variant="text"
-        prepend-icon="mdi-refresh"
-        @click="refresh"
-      >
-        Обновить
-      </v-btn>
-    </v-app-bar>
-
     <!-- Основной контент -->
     <ConnectionCard :connection="conn" :readonly="false" :devices="devices" @refresh="refresh"/>
 

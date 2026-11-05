@@ -1,6 +1,9 @@
 <template>
   <v-app>
-    <v-main>
+    <!-- Фиксированная навигация -->
+    <NavigationBar />
+
+    <v-main style="padding-top: 48px;">
       {{ ha_store }}
       <!-- App messenger -->
       <AppMessenger/>
@@ -14,9 +17,13 @@
 <script>
 import {mapStores} from "pinia";
 import {useHAChangesStore} from '@/store/haChangesStore'
+import NavigationBar from './components/NavigationBar.vue'
 // const haChangesStore = useHAChangesStore()
 
 export default {
+  components: {
+    NavigationBar
+  },
   computed: {
     ha_store() {
       // return haChangesStore;

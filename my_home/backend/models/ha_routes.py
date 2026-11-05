@@ -11,6 +11,8 @@ from utils.db_utils import db_session
 from utils.configs import config
 from utils.home_assistant import ha_websocket
 from utils.ha_manager import ha_manager
+from utils.command_dispatcher import DeviceCommandDispatcher
+from utils.state_model import DeviceCommand
 import os
 import json
 import aiohttp
@@ -91,6 +93,21 @@ def add_ha_routes(app: APIRouter):
         "success": False,
         "error": str(e)
       }
+
+  @app.get("/api/ha/sync-plan", tags=["home-assistant"])
+  async def get_ha_sync_plan():
+    """Build a read-only plan; no HA entities are created or deleted."""
+    try:
+      all_ports = await ha_manager.get_all_ports_from_database()
+      published = {item.get("port_code") or item.get("port_id") for item in ha_manager._published_ports_cache}
+      desired = {item.get("port_code") or item.get("code") for item in all_ports if item.get("ha_eligible", True)}
+      return {"success": True, "manual": True, "mutations": False,
+              "add": sorted(item for item in desired - published if item),
+              "remove": sorted(item for item in published - desired if item),
+              "unchanged": sorted(item for item in desired & published if item),
+              "requires_confirmation": bool(desired - published or published - desired)}
+    except Exception as e:
+      return {"success": False, "error": str(e)}
 
   @app.post("/api/ha/auto-sync", tags=["home-assistant"])
   async def toggle_auto_sync(enabled: bool):
@@ -358,18 +375,23 @@ def add_ha_routes(app: APIRouter):
         if not client:
           raise HTTPException(status_code=404, detail="Device client not found")
 
-        # Отправляем команду на устройство в формате ESP: "code#value"
-        success = await send_command_to_device(client, code, value)
+        result = await DeviceCommandDispatcher(my_home.get_client).dispatch(DeviceCommand(
+          device_id=device_id,
+          code=code,
+          value=value,
+          source="ha_legacy_route",
+        ))
 
-        if success:
+        if result.get("success"):
           return {
             "success": True,
             "message": f"Value {value} set for port {code}",
             "code": code,
-            "value": value
+            "value": value,
+            "command_id": result.get("command_id"),
           }
         else:
-          raise HTTPException(status_code=500, detail="Failed to send command to device")
+          raise HTTPException(status_code=503, detail=result.get("error", "Failed to send command to device"))
 
     except Exception as e:
       raise HTTPException(status_code=500, detail=str(e))
@@ -459,6 +481,58 @@ def add_ha_routes(app: APIRouter):
       return result
     except Exception as e:
       raise HTTPException(status_code=500, detail=str(e))
+
+  @app.get("/api/ha/entities", tags=["home-assistant"])
+  async def get_all_entities():
+    """Получение списка всех entities (сущностей) из Home Assistant для выбора в UI"""
+    try:
+      # Убеждаемся, что WebSocket подключен
+      if not await ensure_websocket_connection():
+        return {"success": False, "error": "Failed to connect to Home Assistant", "entities": []}
+      
+      # Получаем все состояния через WebSocket
+      states_result = await ha_websocket.get_states()
+      
+      if not states_result.get('success'):
+        return {"success": False, "error": states_result.get('error', 'Unknown error'), "entities": []}
+      
+      states = states_result.get('result', [])
+      
+      # Формируем список entities в удобном формате для UI
+      entities = []
+      for state in states:
+        entity_id = state.get('entity_id', '')
+        if entity_id:
+          attributes = state.get('attributes', {})
+          friendly_name = attributes.get('friendly_name') or entity_id
+          domain = entity_id.split('.')[0] if '.' in entity_id else ''
+          device_class = attributes.get('device_class', '')
+          unit_of_measurement = attributes.get('unit_of_measurement', '')
+          
+          entities.append({
+            'entity_id': entity_id,
+            'friendly_name': friendly_name,
+            'domain': domain,
+            'device_class': device_class,
+            'unit_of_measurement': unit_of_measurement,
+            'state': state.get('state', ''),
+            'icon': attributes.get('icon', '')
+          })
+      
+      # Сортируем по friendly_name
+      entities.sort(key=lambda x: x['friendly_name'])
+      
+      return {
+        "success": True,
+        "total": len(entities),
+        "entities": entities
+      }
+      
+    except Exception as e:
+      import traceback
+      print(f"[HA-Get-Entities] Error: {e}")
+      print(f"[HA-Get-Entities] Traceback: {traceback.format_exc()}")
+      return {"success": False, "error": str(e), "entities": []}
 
   @app.post("/api/ha/sync-states", tags=["home-assistant"])
   async def sync_ha_states(device_id: int):
@@ -577,19 +651,15 @@ async def send_command_to_device(client, code: str, value) -> bool:
   Отправляет команду на устройство в формате ESP: "code#value"
   """
   try:
-    # Проверяем что клиент онлайн
-    if not hasattr(client, '_ws') or not client._ws:
-      print(f"[DeviceControl] Device {client.device_id} WebSocket not connected")
-      return False
-
-    # Формируем команду в формате ESP
-    command = f"{code}#{value}"
-
-    # Отправляем через WebSocket клиента устройства
-    await client._ws.send_str(command)
-
-    print(f"[DeviceControl] Command sent to device {client.device_id}: {command}")
-    return True
+    result = await DeviceCommandDispatcher(
+      lambda device_id: client if device_id == client.device_id else None
+    ).dispatch(DeviceCommand(
+      device_id=client.device_id,
+      code=code,
+      value=value,
+      source="legacy_ha_helper",
+    ))
+    return bool(result.get("success"))
 
   except Exception as e:
     print(f"[DeviceControl] Error sending command to device {client.device_id}: {e}")
@@ -1124,8 +1194,9 @@ async def update_port_state_from_ha(device_id: int, port_code: str, ha_state: st
     
     # Обновляем значение порта в клиенте устройства
     if hasattr(client, '_ports_index') and port_code in client._ports_index:
-      client._ports_index[port_code]['val'] = port_value
-      client._ports_index[port_code]['last_update'] = datetime.now().isoformat()
+      for indexed_port in client._ports_index[port_code]:
+        indexed_port['val'] = port_value
+        indexed_port['last_update'] = datetime.now().isoformat()
       
       # Обновляем в списке портов
       for port in client._ports:

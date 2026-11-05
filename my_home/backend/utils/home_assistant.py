@@ -606,13 +606,20 @@ class HomeAssistantWebSocket:
       if not entity_id or not new_state:
         return
 
-      # Проверяем, является ли это нашей сущностью (начинается с myhome)
-      if not entity_id.startswith('myhome'):
-        return
-
       # Получаем новое состояние
       new_state_value = new_state.get('state')
       old_state_value = old_state.get('state') if old_state else None
+
+      # Проверяем, является ли это виртуальным портом (формат <type>.virtual.<name>)
+      # Или старый формат virtual.<name> для обратной совместимости
+      if '.virtual.' in entity_id or entity_id.startswith('virtual.'):
+        # Обрабатываем изменение виртуального порта
+        await self._handle_virtual_port_state_change(entity_id, new_state_value, old_state_value)
+        return
+
+      # Проверяем, является ли это нашей сущностью (начинается с myhome)
+      if not entity_id.startswith('myhome'):
+        return
 
       # Логируем изменение
       logger.info(f"[HA-State-Change] {entity_id}: {old_state_value} -> {new_state_value}")
@@ -622,6 +629,45 @@ class HomeAssistantWebSocket:
 
     except Exception as e:
       logger.error(f"[HA-WebSocket] State change handler error: {e}")
+
+  async def _handle_virtual_port_state_change(self, entity_id: str, new_value: Any, old_value: Any):
+    """Обработка изменения состояния виртуального порта"""
+    try:
+      logger.info(f"[HA-VirtualPort-Change] {entity_id}: {old_value} -> {new_value}")
+      
+      # Обновляем значение в нашей системе
+      from models.virtual_ports_routes import load_virtual_ports, save_virtual_ports
+      from datetime import datetime
+      
+      data = load_virtual_ports()
+      ports = data.get("ports", [])
+      
+      port_index = next((i for i, p in enumerate(ports) if p.get("entity_id") == entity_id), None)
+      if port_index is not None:
+        port = ports[port_index]
+        
+        # Преобразуем значение в нужный тип
+        port_type = port.get("type", "sensor")
+        if port_type in ["input_number", "number"]:
+          try:
+            new_value = float(new_value) if new_value else None
+          except (ValueError, TypeError):
+            new_value = new_value
+        elif port_type in ["input_boolean", "switch"]:
+          new_value = str(new_value).lower() in ["on", "true", "1", "yes"]
+        
+        port["value"] = new_value
+        port["updated_at"] = datetime.now().isoformat()
+        ports[port_index] = port
+        data["ports"] = ports
+        save_virtual_ports(data)
+        
+        logger.debug(f"Virtual port value updated in local storage: {entity_id} = {new_value}")
+      else:
+        logger.warning(f"Virtual port not found in local storage: {entity_id}")
+        
+    except Exception as e:
+      logger.error(f"[HA-WebSocket] Error handling virtual port state change: {e}")
 
   async def _handle_call_service(self, event_data: Dict[str, Any]):
     """Обработка события call_service"""
@@ -777,6 +823,37 @@ class HomeAssistantWebSocket:
       self.pending_requests.pop(self.message_id, None)
       logger.error(f"[HA-WebSocket] Command {self.message_id} error: {e}")
       raise e
+
+  async def send_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+    """Public wrapper for supported HA WebSocket registry commands."""
+    try:
+      return await self._send_command(dict(command))
+    except Exception as error:
+      return {"success": False, "error": str(error)}
+
+  async def ensure_device_registry(self, *, stable_id: str, name: str, manufacturer: str = "MY_HOME",
+                                   model: str = "MY_HOME logical device", sw_version: str | None = None) -> Dict[str, Any]:
+    """Find or create one stable HA device for a logical mapping."""
+    identifier = ["my_home", stable_id]
+    listed = await self.send_command({"type": "config/device_registry/list"})
+    if listed.get("success"):
+      for device in listed.get("result", []):
+        identifiers = device.get("identifiers") or []
+        if any(list(item) == identifier for item in identifiers if isinstance(item, (list, tuple))):
+          return {"success": True, "device_id": device.get("id"), "existing": True}
+
+    created = await self.send_command({
+      "type": "config/device_registry/create",
+      "name": name,
+      "manufacturer": manufacturer,
+      "model": model,
+      "sw_version": sw_version,
+      "identifiers": [identifier],
+    })
+    if created.get("success"):
+      result = created.get("result") or {}
+      return {"success": True, "device_id": result.get("id"), "existing": False}
+    return {"success": False, "error": created.get("error", "device registry unavailable")}
 
   # Методы для интеграции с реальным проектом
 

@@ -86,7 +86,7 @@ const priorityFields = ['name', 'version', 'chip_id', 'mac', 'ssid', 'ip', 'conf
 const filteredInfo = computed(() => {
   if (!props.deviceInfo || props.deviceInfo.error) return {}
   
-  const excludeKeys = ['raw_response', 'error']
+  const excludeKeys = ['raw_response', 'error', 'last_seen']
   const filtered = {}
   const priority = {}
   const other = {}

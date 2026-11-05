@@ -1,19 +1,29 @@
 <template>
-  <v-dialog :model-value="showModal" @update:model-value="$emit('update:showModal', $event)" max-width="900px" scrollable>
+  <v-dialog
+    :model-value="showModal"
+    @update:model-value="$emit('update:showModal', $event)"
+    max-width="1100px"
+    width="calc(100vw - 32px)"
+    scrollable
+  >
     <v-card>
-      <v-card-title class="d-flex align-center">
-        <v-icon class="me-2">mdi-information</v-icon>
-        <span v-if="hasLogsModule">Детали бэкапов и логов - {{ deviceName }}</span>
-        <span v-else>Детали бэкапов - {{ deviceName }}</span>
+      <v-card-title class="d-flex align-center py-2 text-subtitle-1">
+        <v-icon size="20" class="me-2">mdi-information</v-icon>
+        <span>Детали устройства — {{ deviceName }}</span>
       </v-card-title>
       
-      <v-card-text style="max-height: 600px;">
+      <v-card-text class="details-modal-content">
         <!-- Всегда показываем табы -->
-        <v-tabs :model-value="activeTab" @update:model-value="$emit('update:activeTab', $event)" class="mb-4">
+        <v-tabs
+          :model-value="activeTab"
+          @update:model-value="$emit('update:activeTab', $event)"
+          density="compact"
+          class="mb-2"
+        >
           <v-tab value="settings">Настройки</v-tab>
           <v-tab value="backup">Бэкапы</v-tab>
           <v-tab value="logs" v-if="hasLogsModule">Логи</v-tab>
-          <v-tab value="ports">Настройка портов</v-tab>
+          <v-tab value="ports">Параметры портов</v-tab>
           <v-tab value="options" v-if="hasOptionsOrConfig">Options/Config</v-tab>
           <v-tab value="info">Информация</v-tab>
         </v-tabs>
@@ -45,6 +55,7 @@
               @refresh-history="$emit('refresh-backup-history')"
               @download-backup-log="$emit('download-backup-log')"
               @view-backup-log="$emit('view-backup-log')"
+              @delete-backup="$emit('delete-backup', $event)"
               @view-config-file="$emit('view-config-file', $event)"
               @download-config-file="$emit('download-config-file', $event)"
               @notification="$emit('notification', $event)"
@@ -101,9 +112,9 @@
         </v-tabs-window>
       </v-card-text>
       
-      <v-card-actions>
+      <v-card-actions class="py-1">
         <v-spacer></v-spacer>
-        <v-btn @click="$emit('close')">Закрыть</v-btn>
+        <v-btn size="small" @click="$emit('close')">Закрыть</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -230,6 +241,7 @@ const emit = defineEmits([
   'refresh-backup-history',
   'download-backup-log',
   'view-backup-log',
+  'delete-backup',
   'view-config-file',
   'download-config-file',
   'trigger-logs-export',
@@ -271,5 +283,9 @@ watch(() => props.activeTab, (newTab) => {
 </script>
 
 <style scoped>
-/* Стили будут наследоваться от дочерних компонентов */
+.details-modal-content {
+  max-height: min(760px, calc(100vh - 128px));
+  padding-top: 4px;
+  padding-bottom: 8px;
+}
 </style>

@@ -21,10 +21,12 @@ import time
 import os
 import requests
 import hashlib
+import shutil
 from utils.google_connector import GoogleConnector
 from ipaddress import ip_address, AddressValueError
 from fastapi.responses import JSONResponse
 from utils.configs import config
+from utils.diagnostics import diagnostics
 
 import socket
 import ipaddress
@@ -84,12 +86,58 @@ class ConfigVersionManager:
     logger.debug(f"ConfigVersionManager ({self.device_id}) Fetched {len(file_list)} files from {url}")
     return file_list
 
-  def download_file(self, path):
-    logger.debug(f"Downloading file: {path}")
+  def download_file(self, path, retries=2, retry_delay=2):
+    """
+    Загрузка файла с повторами при ошибке
+    
+    Args:
+        path: Путь к файлу
+        retries: Количество повторов (по умолчанию 2)
+        retry_delay: Интервал между повторами в секундах (по умолчанию 2)
+    
+    Returns:
+        bytes: Содержимое файла
+    
+    Raises:
+        Exception: Если файл не удалось загрузить после всех попыток
+    """
     url = self.base_url + os.path.join(self.config_dir, path.lstrip('/'))
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return resp.content
+    
+    for attempt in range(retries + 1):
+      try:
+        logger.debug(f"Downloading file: {path} (attempt {attempt + 1}/{retries + 1})")
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        return resp.content
+      except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+          # Файл не найден - пробуем повторить
+          if attempt < retries:
+            logger.warning(f"[ConfigVersionManager] ({self.device_id}) File not found: {path}, retrying in {retry_delay}s... (attempt {attempt + 1}/{retries + 1})")
+            import time
+            time.sleep(retry_delay)
+            continue
+          else:
+            # Все попытки исчерпаны
+            raise Exception(f"File not found after {retries + 1} attempts: {path}")
+        else:
+          # Другая HTTP ошибка - пробуем повторить
+          if attempt < retries:
+            logger.warning(f"[ConfigVersionManager] ({self.device_id}) HTTP error {e.response.status_code} for {path}, retrying in {retry_delay}s... (attempt {attempt + 1}/{retries + 1})")
+            import time
+            time.sleep(retry_delay)
+            continue
+          else:
+            raise
+      except (requests.exceptions.RequestException, Exception) as e:
+        # Другие ошибки сети или исключения
+        if attempt < retries:
+          logger.warning(f"[ConfigVersionManager] ({self.device_id}) Error downloading {path}: {e}, retrying in {retry_delay}s... (attempt {attempt + 1}/{retries + 1})")
+          import time
+          time.sleep(retry_delay)
+          continue
+        else:
+          raise
 
   def get_latest_backup_dir(self):
     backups = sorted(
@@ -103,6 +151,25 @@ class ConfigVersionManager:
 
   def file_hash(self, content):
     return hashlib.md5(content).hexdigest()
+
+  def _log_backup_error(self, file_path, error_message):
+    """
+    Записывает ошибку загрузки файла в лог бэкапа
+    
+    Args:
+        file_path: Путь к файлу, который не удалось загрузить
+        error_message: Сообщение об ошибке
+    """
+    try:
+      timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+      log_entry = f"[{timestamp}] ERROR: Failed to backup file '{file_path}': {error_message}\n"
+      
+      with open(self.log_file, 'a', encoding='utf-8') as f:
+        f.write(log_entry)
+      
+      logger.debug(f"[ConfigVersionManager] ({self.device_id}) Logged backup error for {file_path}")
+    except Exception as e:
+      logger.error(f"[ConfigVersionManager] ({self.device_id}) Error writing to backup log: {e}")
 
   def _migrate_old_log_file(self):
     """
@@ -303,8 +370,14 @@ class ConfigVersionManager:
       if isinstance(file_path, str) and file_path.startswith('/'):
         file_path = file_path[1:]
 
-      content = self.download_file(file_path)
-      current_files[file_path] = content
+      try:
+        content = self.download_file(file_path)
+        current_files[file_path] = content
+      except Exception as e:
+        logger.error(f"[ConfigVersionManager] ({self.device_id}) Failed to download file {file_path} after retries: {e}")
+        # Записываем в лог и продолжаем со следующим файлом
+        self._log_backup_error(file_path, str(e))
+        continue
 
       filename = os.path.basename(file_path)
       if latest_backup_dir:
@@ -332,6 +405,23 @@ class ConfigVersionManager:
         with open(os.path.join(new_backup_dir, filename), 'wb') as f:
           f.write(content)
 
+      # Keep the original relative path and digest so recovery can upload
+      # nested files back to the exact firmware path.
+      manifest = {
+        "version": 1,
+        "files": [
+          {
+            "path": path,
+            "stored_name": os.path.basename(path),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+          }
+          for path, content in current_files.items()
+        ],
+      }
+      with open(os.path.join(new_backup_dir, 'manifest.json'), 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
       self.save_history_entry(timestamp, changed_files)
       logger.info(f"[ConfigVersionManager] ({self.device_id}) Изменения сохранены: {timestamp}")
 
@@ -357,6 +447,7 @@ class ConfigVersionManager:
     os.makedirs(backup_dir, exist_ok=True)
 
     backed_up_files = []
+    manifest_files = []
 
     for item in file_list:
       # Обрабатываем как строку или как объект с полем name
@@ -380,12 +471,23 @@ class ConfigVersionManager:
           f.write(content)
 
         backed_up_files.append(path)
+        manifest_files.append({
+          "path": path,
+          "stored_name": os.path.basename(file_path),
+          "sha256": hashlib.sha256(content).hexdigest(),
+          "size": len(content),
+        })
         logger.info(f"[ConfigVersionManager] ({self.device_id}) Forced backup: {path}")
 
       except Exception as e:
-        logger.error(f"[ConfigVersionManager] ({self.device_id}) Error backing up {path}: {e}")
+        logger.error(f"[ConfigVersionManager] ({self.device_id}) Failed to download file {path} after retries: {e}")
+        # Записываем в лог и продолжаем со следующим файлом
+        self._log_backup_error(path, str(e))
+        continue
 
     if backed_up_files:
+      with open(os.path.join(backup_dir, 'manifest.json'), 'w', encoding='utf-8') as f:
+        json.dump({"version": 1, "files": manifest_files}, f, ensure_ascii=False, indent=2)
       self.save_history_entry(timestamp, backed_up_files)
       logger.info(f"[ConfigVersionManager] ({self.device_id}) Forced backup completed: {len(backed_up_files)} files")
 
@@ -541,7 +643,13 @@ class MyHomeClass(SingletonClass):
     self.stop_event = threading.Event()
     self.thread.start()
 
-    self.NETWORK = config['local_networks'] or self.NETWORK
+    # В UI используется local_network, старые конфигурации содержат
+    # local_networks. Берём новое значение, сохраняя обратную совместимость.
+    self.NETWORK = (
+      config['local_network']
+      or config['local_networks']
+      or self.NETWORK
+    )
     self.SCAN_TIMEOUT = config['scan_timeout'] or self.SCAN_TIMEOUT
     self.is_fast_scan = config['is_fast_scan'] or True
 
@@ -1151,6 +1259,9 @@ class MyHomeClass(SingletonClass):
     Вызывается при подключении устройства
     """
     logger.success(f"Device {device_id} WebSocket connected")
+    client = self._devices.get(device_id)
+    diagnostics.record("connection", "WebSocket подключён", device_id=device_id,
+                       device_name=getattr(client, "name", None), details={"status": "connected"})
 
     # Обновляем статус в БД
     try:
@@ -1188,6 +1299,19 @@ class MyHomeClass(SingletonClass):
     Вызывается при отключении устройства
     """
     logger.warning(f"Device {device_id} WebSocket disconnected")
+    client = self._devices.get(device_id)
+    state = getattr(getattr(client, "_sync_state", None), "to_dict", lambda: {})()
+    diagnostics.record("connection_loss", "WebSocket отключён", device_id=device_id,
+                       device_name=getattr(client, "name", None), level="warning",
+                       reason=state.get("offline_reason"), details={
+                         "reconnect_count": state.get("reconnect_count"),
+                         "last_error": state.get("last_error"),
+                       })
+    try:
+      from models.virtual_devices_routes import mark_bound_ports_offline
+      mark_bound_ports_offline(device_id)
+    except Exception as error:
+      logger.debug(f"Virtual availability update skipped: {error}")
 
     # Обновляем статус в БД
     try:
@@ -1247,10 +1371,63 @@ class MyHomeClass(SingletonClass):
       logger.error(f"Error broadcasting device status update: {e}")
 
   def _on_initial_ports(self, device_id: int, ports: list[dict]):
-    """
-    Регистрируем/обновляем порты в БД под устройством и синхронизируем runtime-модель.
-    """
+    """Register the current /values inventory in the local database."""
     logger.info(f"Initial ports for device {device_id}: {len(ports)} ports")
+    try:
+      asyncio.create_task(config.prune_published_ports(
+        device_id,
+        {port.get("code") for port in ports if port.get("code")},
+      ))
+    except RuntimeError:
+      logger.debug("No running event loop while pruning stale HA mappings")
+    with db_session() as db:
+      for port in ports:
+        code = port.get("code")
+        if not code:
+          continue
+        direction = port.get("direction") or "unknown"
+        params = dict(port.get("extra") or {})
+        params.update({
+          "direction": direction,
+          "kind": port.get("kind"),
+          "type_raw": port.get("type_raw"),
+          "mqtt": port.get("mqtt"),
+          "href": port.get("href"),
+          "group_title": port.get("group_title"),
+          "block_id": port.get("block_id"),
+          "value_type": port.get("value_type"),
+          "ha_eligible": port.get("ha_eligible", True),
+          "last_value": port.get("val"),
+        })
+        existing = next(
+          (
+            candidate for candidate in db.query(DbPorts).filter(
+              DbPorts.device_id == device_id,
+              DbPorts.code == code,
+            ).all()
+            if (candidate.params or {}).get("direction") == direction
+          ),
+          None,
+        )
+        if not existing:
+          db.add(DbPorts(
+            device_id=device_id,
+            code=code,
+            name=port.get("title") or code,
+            label=port.get("title") or code,
+            type=port.get("type_raw"),
+            unit=port.get("unit"),
+            groups_name=port.get("group_title"),
+            params=params,
+          ))
+        else:
+          existing.name = port.get("title") or existing.name or code
+          existing.label = port.get("title") or existing.label
+          existing.type = port.get("type_raw")
+          existing.unit = port.get("unit")
+          existing.groups_name = port.get("group_title")
+          existing.params = {**(existing.params or {}), **params}
+      db.commit()
     # with db_session() as db:
     #   for p in ports:
     #     code = p["code"]
@@ -1293,6 +1470,18 @@ class MyHomeClass(SingletonClass):
     if not code:
       return
 
+    try:
+      from models.virtual_devices_routes import propagate_bound_value
+      propagate_bound_value(device_id, code, event.get("value", event.get("val")))
+    except Exception as error:
+      logger.debug(f"Virtual binding update skipped: {error}")
+
+    try:
+      from models.module_link_routes import ingest_physical_value
+      ingest_physical_value(device_id, code, event.get("value", event.get("val")))
+    except Exception as error:
+      logger.debug(f"Physical module-link feedback skipped: {error}")
+
     # Обновляем БД
     pin_id = device_id  # По умолчанию используем device_id
     with db_session() as db:
@@ -1303,7 +1492,11 @@ class MyHomeClass(SingletonClass):
         .first()
       )
       if db_port:
-        db_port.last_value = event.get("val")
+        db_port.params = {
+          **(db_port.params or {}),
+          "last_value": event.get("val"),
+          "last_update": datetime.now().isoformat(),
+        }
         pin_id = db_port.id  # Используем ID порта если он найден
 
       # Обновляем статус устройства как онлайн при получении любых данных
@@ -1379,6 +1572,58 @@ def add_routes(app: APIRouter, my_home: MyHomeClass):
   logger.info('Adding MYHOME routes')
   logger.debug(f"App type: {type(app)}")
   logger.debug(f"my_home type: {type(my_home)}")
+
+  @app.delete("/api/myhome/device/{device_id}", tags=["devices"])
+  async def delete_myhome_device(device_id: int):
+    """Остановить клиент и удалить устройство вместе со всеми локальными данными."""
+    client = my_home.get_client(device_id)
+    if client is None:
+      return JSONResponse({"error": "Device not found"}, status_code=404)
+
+    try:
+      await client.stop()
+      my_home._devices.pop(device_id, None)
+
+      with db_session() as db:
+        device = db.query(DbDevices).filter(DbDevices.id == device_id).first()
+        if device is None:
+          return JSONResponse({"error": "Device not found"}, status_code=404)
+        db.query(DbPorts).filter(DbPorts.device_id == device_id).delete(synchronize_session=False)
+        db.delete(device)
+        db.commit()
+
+      # Удаляем файлы и записи, которые не связаны с устройством через ORM.
+      # Это важно, иначе после удаления устройства остаются его бэкапы и логи.
+      from sqlalchemy import text
+      from utils.configs import get_data_dir
+
+      with db_session() as db:
+        try:
+          db.execute(text("DELETE FROM device_logs WHERE device_id = :device_id"), {
+            "device_id": device_id
+          })
+          db.commit()
+        except Exception as cleanup_error:
+          db.rollback()
+          logger.warning(f"Could not clean device_logs for device {device_id}: {cleanup_error}")
+
+      # Убираем сохранённые связи устройства с сущностями Home Assistant.
+      try:
+        await config.prune_published_ports(device_id, set())
+      except Exception as cleanup_error:
+        logger.warning(f"Could not clean HA mappings for device {device_id}: {cleanup_error}")
+
+      data_dir = os.path.realpath(get_data_dir())
+      backup_root = os.path.realpath(os.path.join(data_dir, "backup", str(device_id)))
+      local_logs_root = os.path.realpath(os.path.join(data_dir, "store", "backup", "logs", str(device_id)))
+      for artifact_path in (backup_root, local_logs_root):
+        if os.path.exists(artifact_path):
+          shutil.rmtree(artifact_path)
+
+      return {"status": "ok", "device_id": device_id}
+    except Exception as e:
+      logger.error(f"Error deleting device {device_id}: {e}")
+      return JSONResponse({"error": str(e)}, status_code=500)
 
   @app.get("/api/live/scan",
            tags=["live"])
@@ -1653,15 +1898,23 @@ def add_routes(app: APIRouter, my_home: MyHomeClass):
           result.append({
             "device_id": client.device_id,
             "device_name": client.name,
+            "device_model": client.model,
+            "device_vendor": client.vendor,
             "code": p.get("code"),
+            "name": p.get("name") or p.get("title") or p.get("code"),
+            "label": p.get("label") or p.get("name") or p.get("title"),
             "val": p.get("val"),
+            "value": p.get("val"),
             "last_update": p.get("last_update"),
             "direction": p.get("direction"),
             "kind": p.get("kind"),
+            "type": p.get("type"),
             "unit": p.get("unit"),
+            "unit_of_measurement": p.get("unit"),
             "title": p.get("title"),
             "group_title": p.get("group_title"),
             "raw": p.get("raw"),
+            "entity_id": p.get("entity_id") or f"{client.device_id}_{p.get('code')}"
           })
       except Exception as e:
         # Если клиент недоступен, пропускаем или можно добавить ошибку

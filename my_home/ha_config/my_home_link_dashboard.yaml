@@ -1,0 +1,110 @@
+title: MY HOME Link
+views:
+  - title: MY HOME Link
+    path: my-home-link
+    icon: mdi:link-variant
+    cards:
+      - type: markdown
+        content: |
+          # MY HOME Link
+
+          Виртуальная тестовая связка между Home Assistant и ESP.
+
+          **HA / floor_heating → ESP / boiler_ctrl** — запросы  
+          **ESP / boiler_ctrl → HA / floor_heating** — обратная связь
+
+          Виртуальный boiler не управляет физическими выходами.
+
+      - type: entities
+        title: Состояние связи
+        show_header_toggle: false
+        entities:
+          - entity: input_select.my_home_link_mode
+            name: Режим
+          - entity: sensor.my_home_link_virtual_boiler_state
+            name: Состояние virtual boiler
+          - entity: input_select.my_home_link_quality
+            name: Качество данных
+          - entity: input_select.my_home_link_feedback_state
+            name: Состояние обратной связи
+          - entity: input_number.my_home_link_last_update_age
+            name: Возраст последнего обновления
+          - entity: input_text.my_home_link_error
+            name: Ошибка связи
+
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: input_number.my_home_link_demand_percent
+            name: Demand
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 0
+              yellow: 60
+              red: 90
+          - type: gauge
+            entity: input_number.my_home_link_boiler_temperature
+            name: Требуемая подача
+            min: 25
+            max: 50
+            needle: true
+            severity:
+              green: 25
+              yellow: 40
+              red: 48
+          - type: gauge
+            entity: input_number.my_home_link_supply
+            name: Текущая подача
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 25
+              yellow: 60
+              red: 85
+
+      - type: entities
+        title: Запросы Home Assistant → ESP
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.my_home_link_ok
+            name: Floor heating OK
+          - entity: input_boolean.my_home_link_boiler_enable
+            name: Запрос включения boiler
+          - entity: input_number.my_home_link_boiler_temperature
+            name: Требуемая температура подачи
+          - entity: input_number.my_home_link_demand_percent
+            name: Demand percent
+          - entity: input_boolean.my_home_link_turbo
+            name: Turbo
+          - entity: input_select.my_home_link_quality
+            name: Качество запроса
+
+      - type: entities
+        title: Обратная связь ESP → Home Assistant
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.my_home_link_boiler_ready
+            name: Boiler ready
+          - entity: input_number.my_home_link_supply
+            name: Фактическая/расчётная подача
+          - entity: input_select.my_home_link_feedback_state
+            name: Состояние обратной связи
+          - entity: input_number.my_home_link_last_update_age
+            name: Возраст обновления
+          - entity: input_text.my_home_link_error
+            name: Ошибка
+
+      - type: markdown
+        title: Контракт направления
+        content: |
+          | Направление | Значения |
+          |---|---|
+          | HA → ESP | `ok`, `boiler_enable`, `boiler_temperature`, `demand_percent`, `turbo`, `quality` |
+          | ESP → HA | `ready`, `supply` |
+
+          **Физические выходы:** защищены  
+          **MQTT:** не требуется  
+          **Virtual boiler:** только тестирование

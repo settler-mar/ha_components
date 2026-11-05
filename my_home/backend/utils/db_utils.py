@@ -339,7 +339,15 @@ def check_structure():
       in Base.metadata.tables[table_name].columns}
     expected_columns = {(col[0], col[1], get_default_value(col[2], col[1]), col[3], col[4]) for col in expected_columns}
 
-    if existing_columns != expected_columns:
+    # existing_columns содержит (name, type, default), а expected_columns —
+    # (name, type, default, nullable, autoincrement). Сравнение этих наборов
+    # напрямую всегда давало False и запускало разрушительную миграцию SQLite
+    # на каждом старте. Для текущей проверки достаточно состава колонок;
+    # добавление/удаление колонок по-прежнему передаётся мигратору.
+    existing_column_names = {column[0] for column in existing_columns}
+    expected_column_names = {column[0] for column in expected_columns}
+
+    if existing_column_names != expected_column_names:
       logger.info(f"Database structure changes detected for table {table_name}")
       update_struct_function(table_name, expected_columns, existing_columns, inspector)
 

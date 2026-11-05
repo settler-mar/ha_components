@@ -384,12 +384,13 @@ api_logger = get_logger("API")
 config_logger = get_logger("Config")
 device_logger = get_logger("Device")
 port_logger = get_logger("Port")
+virtual_ports_logger = get_logger("VirtualPorts")
 
 
 # Функции для управления логгерами
 def update_all_loggers():
   """Обновить все глобальные логгеры"""
-  global ha_logger, myhome_logger, db_logger, ws_logger, api_logger, config_logger, device_logger, port_logger
+  global ha_logger, myhome_logger, db_logger, ws_logger, api_logger, config_logger, device_logger, port_logger, virtual_ports_logger
   ha_logger.update_config()
   myhome_logger.update_config()
   db_logger.update_config()
@@ -398,6 +399,7 @@ def update_all_loggers():
   config_logger.update_config()
   device_logger.update_config()
   port_logger.update_config()
+  virtual_ports_logger.update_config()
 
 
 def set_module_level(module_name: str, level: LogLevel):

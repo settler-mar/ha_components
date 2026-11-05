@@ -45,7 +45,7 @@ class ValueMapper:
         f"Mapping HA value {ha_value} to device for port {port_code} (type: {port_type}, direction: {port_direction})")
 
       # Маппинг в зависимости от типа порта
-      if port_type in ['switch', 'button', 'relay']:
+      if port_type in ['switch', 'button', 'relay', 'didgi', 'digital']:
         return self._map_switch_ha_to_device(ha_value)
       elif port_type in ['sensor', 'analog', 'temperature', 'humidity', 'pressure']:
         return self._map_sensor_ha_to_device(ha_value)
@@ -77,7 +77,7 @@ class ValueMapper:
         f"Mapping device value {device_value} to HA for port {port_code} (type: {port_type}, direction: {port_direction})")
 
       # Маппинг в зависимости от типа порта
-      if port_type in ['switch', 'button', 'relay']:
+      if port_type in ['switch', 'button', 'relay', 'didgi', 'digital']:
         return self._map_switch_device_to_ha(device_value)
       elif port_type in ['sensor', 'analog', 'temperature', 'humidity', 'pressure']:
         return self._map_sensor_device_to_ha(device_value)

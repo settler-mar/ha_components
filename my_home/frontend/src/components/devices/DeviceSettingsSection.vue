@@ -6,7 +6,7 @@
         Настройки устройства
       </h3>
       <p class="text-body-2 text-grey">
-        Изменение параметров устройства и настроек интеграции с Home Assistant
+        Изменение основных параметров устройства
       </p>
     </div>
 
@@ -105,12 +105,16 @@ const formData = ref({})
 
 const structure = computed(() => tableStore.tables.devices?.structure || [])
 
-const excludeFields = ['id', 'params', 'created_at', 'created_by', 'updated_at', 'updated_by', 'code', 'model', 'vendor', 'type']
+const excludeFields = ['id', 'params', 'created_at', 'created_by', 'updated_at', 'updated_by', 'code', 'model', 'vendor', 'type', 'last_seen']
 const onlyShowFields = ['created_at', 'created_by', 'updated_at', 'updated_by']
+// Поля, которые управляются отдельной вкладкой интеграции с HA и не должны
+// дублироваться в общей форме настроек устройства.
+const haManagedFields = new Set(['ha_integration_enabled', 'ha_entity_prefix', 'ha_publish_device_online'])
 
 const structureToShow = computed(() => {
   return structure.value.filter(field => {
     if (excludeFields.includes(field.name)) return false
+    if (haManagedFields.has(field.name)) return false
     if (field.name === 'connection_id') return false
     return true
   })
@@ -130,6 +134,8 @@ const mergedFields = computed(() => {
   }
 
   for (const key in params) {
+    if (haManagedFields.has(key)) continue
+    if (excludeFields.includes(key)) continue
     customFields.push({
       name: key,
       ...params[key]
@@ -170,12 +176,6 @@ const loadDevice = async () => {
         formData.value[key] = props.customParams[key].default ?? null
       }
     }
-
-    // Обрабатываем HA настройки
-    const haSettings = device.params?.ha_integration || {}
-    formData.value.ha_integration_enabled = haSettings.enabled ?? true
-    formData.value.ha_entity_prefix = haSettings.entityPrefix || device.name || 'device'
-    formData.value.ha_publish_device_online = haSettings.publishDeviceOnline ?? true
   } catch (err) {
     console.error('Error loading device:', err)
     error.value = 'Ошибка загрузки данных устройства'
@@ -237,19 +237,6 @@ const save = async () => {
       } else {
         if (dataToSend[key[0]]) continue
         dataToSend[key[0]] = value
-      }
-    }
-
-    // Обрабатываем HA настройки
-    if (formData.value.ha_integration_enabled !== undefined ||
-        formData.value.ha_entity_prefix !== undefined ||
-        formData.value.ha_publish_device_online !== undefined) {
-      
-      dataToSend.params = dataToSend.params || {}
-      dataToSend.params.ha_integration = {
-        enabled: formData.value.ha_integration_enabled ?? true,
-        entityPrefix: formData.value.ha_entity_prefix || formData.value.name || 'device',
-        publishDeviceOnline: formData.value.ha_publish_device_online ?? true
       }
     }
 

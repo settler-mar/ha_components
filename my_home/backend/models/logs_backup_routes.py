@@ -5,6 +5,7 @@ import os
 import json
 import asyncio
 import aiohttp
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -15,6 +16,42 @@ from utils.db_utils import db_session
 from models.enhanced_logs import EnhancedLogsManager, LogsTable
 from models.my_home import MyHomeClass, ConfigVersionManager
 from utils.google_connector import GoogleConnector
+
+
+def _backup_device_root(device_id: int) -> str:
+    """Return the canonical backup directory for a device."""
+    from utils.configs import get_data_dir
+    return os.path.realpath(os.path.join(get_data_dir(), "backup", str(device_id)))
+
+
+def _safe_backup_dir(device_id: int, timestamp: str) -> str:
+    """Resolve one backup directory without allowing path traversal."""
+    if not timestamp or timestamp in {'.', '..'} or os.path.basename(timestamp) != timestamp:
+        raise HTTPException(status_code=400, detail="Invalid backup name")
+
+    root = _backup_device_root(device_id)
+    path = os.path.realpath(os.path.join(root, timestamp))
+    if os.path.dirname(path) != root:
+        raise HTTPException(status_code=400, detail="Invalid backup name")
+    return path
+
+
+def _remove_backup_history_entry(device_id: int, timestamp: str) -> bool:
+    """Remove history lines belonging to a backup or an old error entry."""
+    log_file = os.path.join(_backup_device_root(device_id), "backup.log")
+    if not os.path.isfile(log_file):
+        return False
+
+    with open(log_file, "r", encoding="utf-8") as source:
+        lines = source.readlines()
+
+    prefix = f"{timestamp}:"
+    remaining = [line for line in lines if not line.startswith(prefix)]
+    if remaining != lines:
+        with open(log_file, "w", encoding="utf-8") as target:
+            target.writelines(remaining)
+        return True
+    return False
 
 
 def add_logs_backup_routes(app: APIRouter):
@@ -107,29 +144,110 @@ def add_logs_backup_routes(app: APIRouter):
             
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+
+    @app.get("/api/devices/{device_id}/backup/snapshot", tags=["backup"])
+    async def get_configuration_snapshot(device_id: int):
+        """Return the complete safe-to-export integration snapshot."""
+        client = MyHomeClass().get_client(device_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Device not found")
+        with db_session() as db:
+            device = db.query(Devices).filter(Devices.id == device_id).first()
+            params = dict(device.params or {}) if device else {}
+        secret_keys = {"password", "token", "access_token", "api_key", "secret"}
+        safe_params = {key: value for key, value in params.items() if key.lower() not in secret_keys}
+        return {"success": True, "version": 1, "compatible": True, "device_id": device_id,
+                "created_at": datetime.now().isoformat(), "board": client.meta,
+                "physical_ports": await client.get_ports_cached(),
+                "logical_devices": safe_params.get("logical_devices", []), "settings": safe_params}
+
+    @app.post("/api/devices/{device_id}/backup/compare", tags=["backup"])
+    async def compare_configuration_snapshot(device_id: int, payload: Dict[str, Any]):
+        current = await get_configuration_snapshot(device_id)
+        incoming = payload.get("snapshot") or payload
+        if not isinstance(incoming, dict):
+            raise HTTPException(status_code=400, detail="Snapshot must be an object")
+        diffs = []
+        for section in ("logical_devices", "settings"):
+            if current.get(section) != incoming.get(section):
+                diffs.append(section)
+        return {"success": True, "compatible": incoming.get("version", 1) == 1,
+                "has_changes": bool(diffs), "changed_sections": diffs,
+                "requires_confirmation": bool(diffs)}
+
+    @app.post("/api/devices/{device_id}/backup/restore", tags=["backup"])
+    async def restore_configuration_snapshot(device_id: int, payload: Dict[str, Any]):
+        """Apply only an explicitly confirmed snapshot; DB transaction is the rollback boundary."""
+        if payload.get("confirmed") is not True:
+            raise HTTPException(status_code=409, detail="Explicit confirmation is required")
+        snapshot = payload.get("snapshot") or {}
+        if snapshot.get("version", 1) != 1:
+            raise HTTPException(status_code=409, detail="Unsupported snapshot version")
+        current = await get_configuration_snapshot(device_id)
+        with db_session() as db:
+            device = db.query(Devices).filter(Devices.id == device_id).first()
+            if not device:
+                raise HTTPException(status_code=404, detail="Device not found")
+            params = dict(device.params or {})
+            # Keep a rollback snapshot before the new state is committed.
+            params["last_restore_rollback"] = {"created_at": datetime.now().isoformat(),
+                                                "logical_devices": current.get("logical_devices", []),
+                                                "settings": current.get("settings", {})}
+            if isinstance(snapshot.get("logical_devices"), list):
+                params["logical_devices"] = snapshot["logical_devices"]
+            for key, value in (snapshot.get("settings") or {}).items():
+                if key not in {"password", "token", "access_token", "api_key", "secret"}:
+                    params[key] = value
+            device.params = params
+            db.commit()
+        return {"success": True, "restored": True, "rollback_available": True,
+                "restored_at": datetime.now().isoformat()}
+
+    @app.delete("/api/devices/{device_id}/backup/{timestamp}", tags=["backup"])
+    async def delete_backup(device_id: int, timestamp: str):
+        """Удалить бэкап или отдельную устаревшую запись из backup.log."""
+        try:
+            backup_path = _safe_backup_dir(device_id, timestamp)
+            backup_deleted = False
+            if os.path.isdir(backup_path):
+                shutil.rmtree(backup_path)
+                backup_deleted = True
+
+            history_deleted = _remove_backup_history_entry(device_id, timestamp)
+            if not backup_deleted and not history_deleted:
+                raise HTTPException(status_code=404, detail="Backup or history entry not found")
+
+            return {
+                "success": True,
+                "device_id": device_id,
+                "backup": timestamp,
+                "backup_deleted": backup_deleted,
+                "history_deleted": history_deleted,
+            }
+        except HTTPException:
+            raise
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete backup: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/api/devices/{device_id}/logs/export", tags=["logs"])
     async def trigger_manual_logs_export(device_id: int):
         """Запуск ручного экспорта логов устройства"""
         try:
             from models.my_home import MyHomeClass
             my_home = MyHomeClass()
-            
-            # Получаем клиент устройства
+
             client = my_home.get_client(device_id)
             if not client:
                 return {"success": False, "error": "Device not found"}
-            
-            # Получаем IP устройства
+
             device_ip = client.ip
             if not device_ip:
                 return {"success": False, "error": "Device IP not configured"}
-            
-            # Запускаем экспорт логов для этого устройства
+
             my_home._save_logs_for_device(device_id, device_ip)
-            
             return {"success": True, "message": "Logs export triggered successfully"}
-            
         except Exception as e:
             return {"success": False, "error": str(e)}
     
@@ -367,6 +485,8 @@ def add_logs_backup_routes(app: APIRouter):
                 
                 # Проходим по файлам в папке бэкапа
                 for filename in os.listdir(backup_path):
+                    if filename == 'manifest.json':
+                        continue
                     filepath = os.path.join(backup_path, filename)
                     if os.path.isfile(filepath):
                         if filename not in files_info:

@@ -1,0 +1,25 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# MY HOME Link virtual test components.
+# These entities are software-only and do not control physical outputs.
+homeassistant:
+  packages: !include_dir_named packages
+
+lovelace:
+  dashboards:
+    my-home-link:
+      mode: yaml
+      filename: my_home_link_dashboard.yaml
+      title: MY HOME Link
+      icon: mdi:link-variant
+      show_in_sidebar: true
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml

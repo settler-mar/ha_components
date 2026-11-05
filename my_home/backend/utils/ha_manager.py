@@ -16,6 +16,8 @@ from utils.db_utils import db_session
 from utils.configs import config
 from utils.home_assistant import HomeAssistantWebSocket, PortConfig, PortType, ControlType
 from utils.value_mapper import value_mapper
+from utils.command_dispatcher import DeviceCommandDispatcher
+from utils.state_model import DeviceCommand
 
 # Импортируем глобальный логгер
 from utils.logger import ha_logger as logger
@@ -27,10 +29,14 @@ class HomeAssistantManager:
   def __init__(self):
     self.ha_client = HomeAssistantWebSocket()
     self.initialized = False
-    self.auto_sync_enabled = True
+    # Публикация и удаление entities выполняются только явным действием
+    # пользователя. Старый флаг сохраняется для совместимости API, но не
+    # запускает синхронизацию при старте.
+    self.auto_sync_enabled = False
     self.sync_in_progress = False
     self.device_clients = {}  # Удаляем, будем использовать my_home
     self.my_home = None  # Добавляем ссылку на my_home
+    self.command_dispatcher = None
 
     # Кэш опубликованных портов
     self._published_ports_cache = []
@@ -92,8 +98,11 @@ class HomeAssistantManager:
         return False
 
       # Получаем настройки автосинхронизации
-      self.auto_sync_enabled = config.is_auto_sync_enabled()
-      logger.info(f"Auto-sync enabled: {self.auto_sync_enabled}")
+      configured_auto_sync = config.is_auto_sync_enabled()
+      self.auto_sync_enabled = False
+      logger.info(
+        f"Auto-sync configured={configured_auto_sync}, runtime disabled until explicit user action"
+      )
 
       # Загружаем кэш опубликованных портов
       logger.info("Loading published ports cache from database...")
@@ -251,7 +260,9 @@ class HomeAssistantManager:
               'port_type': port.type,
               'params': port.params or {},
               'device_name': device.name,
-              'port_name': port.name
+              'port_name': port.name,
+              'direction': (port.params or {}).get('direction'),
+              'kind': (port.params or {}).get('kind')
             }
             device_data.append(port_data)
 
@@ -646,6 +657,15 @@ class HomeAssistantManager:
       else:
         value = new_value
 
+      # MY HOME Link may explicitly use this HA entity as a producer value.
+      # The link layer remains fail-closed and dispatches to ESP only in
+      # physical mode with an explicit physical binding.
+      try:
+        from models.module_link_routes import ingest_ha_value
+        await ingest_ha_value(entity_id, value)
+      except Exception as error:
+        logger.debug(f"Module-link HA value bridge skipped: {error}")
+
       # Отправляем команду на устройство
       await self._send_command_to_device(device_id, port_code, value)
 
@@ -655,29 +675,23 @@ class HomeAssistantManager:
   async def _send_command_to_device(self, device_id: int, port_code: str, value: Any):
     """Отправка команды на устройство"""
     try:
-      # Получаем клиент устройства через my_home
-      device_client = self.get_device_client(device_id)
-      if not device_client:
-        logger.warning(f"Device client not found for device {device_id}")
-        return
-
-      # Проверяем, что устройство онлайн
-      if not device_client._online:
-        logger.warning(f"Device {device_id} is offline, cannot send command")
-        return
-
       # Преобразуем значение из HA в формат устройства
       port_info = self._get_port_info_from_cache(port_code, device_id)
       mapped_value = value_mapper.map_ha_to_device(port_code, value, port_info)
       logger.debug(f"Mapped HA value {value} to device value {mapped_value} for port {port_code}")
-
-      # Отправляем команду через метод send_command (формат ESP: "code#value")
-      success = await device_client.send_command(port_code, mapped_value)
-
-      if success:
-        logger.info(f"Command sent successfully to device {device_id}, port {port_code}: {value} -> {mapped_value}")
+      if not self.command_dispatcher:
+        logger.warning("Command dispatcher is not initialized")
+        return
+      result = await self.command_dispatcher.dispatch(DeviceCommand(
+        device_id=device_id,
+        code=port_code,
+        value=mapped_value,
+        source="home_assistant",
+      ))
+      if result.get("success"):
+        logger.info(f"Command accepted: {device_id}:{port_code} ({value} -> {mapped_value})")
       else:
-        logger.error(f"Failed to send command to device {device_id}, port {port_code}: {value} -> {mapped_value}")
+        logger.error(f"Command failed: {device_id}:{port_code}: {result.get('error')}")
 
     except Exception as e:
       logger.error(f"Error sending command to device: {e}")
@@ -754,6 +768,7 @@ class HomeAssistantManager:
   def set_my_home(self, my_home):
     """Установка ссылки на my_home"""
     self.my_home = my_home
+    self.command_dispatcher = DeviceCommandDispatcher(my_home.get_client) if my_home else None
     logger.info(f"MyHome reference set, devices count: {len(my_home._devices) if my_home else 0}")
 
   def get_device_client(self, device_id: int):
@@ -781,9 +796,17 @@ class HomeAssistantManager:
         logger.debug(f"Port {device_id}:{port_code} is not published to HA")
         return
 
+      device_client = self.get_device_client(device_id)
+      if device_client and not device_client.has_known_port(port_code):
+        logger.warning(f"Skipping stale HA mapping absent from /values: {device_id}:{port_code}")
+        return
+
       # Преобразуем значение в формат HA
       port_info = self._get_port_info_from_cache(port_code, device_id)
       logger.debug(f"Port info for mapping: {port_info}")
+      if port_info and not (port_info.get('params') or {}).get('ha_eligible', True):
+        logger.warning(f"Skipping ambiguous port {device_id}:{port_code}; firmware code is not unique")
+        return
       
       ha_value = value_mapper.map_device_to_ha(port_code, value, port_info)
       ha_state = str(ha_value) if not isinstance(ha_value, str) else ha_value
@@ -876,12 +899,12 @@ class HomeAssistantManager:
           port_data = {
             'device_id': port.device_id,
             'port_code': port.code,
-            'kind': port.kind,
-            'direction': port.direction,
+            'kind': (port.params or {}).get('kind'),
+            'direction': (port.params or {}).get('direction'),
             'name': port.name,
             'params': port.params or {}
           }
-          logger.debug(f"Found port in DB: {port_code} (type: {port.kind}, direction: {port.direction})")
+          logger.debug(f"Found port in DB: {port_code} (type: {(port.params or {}).get('kind')}, direction: {(port.params or {}).get('direction')})")
           logger.debug(f"Port data: {port_data}")
           return port_data
         else:
@@ -889,7 +912,7 @@ class HomeAssistantManager:
           
           # Давайте посмотрим, какие порты есть для этого устройства
           all_ports = db.query(Ports).filter(Ports.device_id == device_id).all()
-          logger.debug(f"All ports for device {device_id}: {[(p.code, p.kind) for p in all_ports]}")
+          logger.debug(f"All ports for device {device_id}: {[(p.code, (p.params or {}).get('kind')) for p in all_ports]}")
           
           return None
           

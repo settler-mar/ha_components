@@ -18,6 +18,19 @@ from models.ha_routes import add_ha_routes
 from models.logs_backup_routes import add_logs_backup_routes
 from models.ports_settings_routes import add_ports_settings_routes
 from models.addon_config_routes import add_addon_config_routes
+from models.energy_routes import add_energy_routes
+from models.automation_routes import add_automation_routes
+from models.virtual_ports_routes import add_virtual_ports_routes
+from models.virtual_devices_routes import add_virtual_devices_routes
+from models.logical_devices_routes import add_logical_device_routes
+from models.logical_ha_routes import add_logical_ha_routes
+from models.health_routes import add_health_routes
+from models.settings_routes import add_settings_routes
+from models.module_link_routes import add_module_link_routes
+from models.diagnostics_routes import add_diagnostics_routes
+from utils.diagnostics import diagnostics
+from utils.command_dispatcher import DeviceCommandDispatcher
+from utils.state_model import DeviceCommand
 
 from utils.google_connector import GoogleConnector
 
@@ -86,11 +99,27 @@ def init(add_routes=True):
     add_ports_settings_routes(app)
     add_logger_routes(app)
     add_addon_config_routes(app)
+    add_energy_routes(app)
+    add_automation_routes(app)
+    add_virtual_ports_routes(app)
+    add_virtual_devices_routes(app)
+    add_logical_device_routes(app, resolver=my_home.get_client)
+    add_logical_ha_routes(app, resolver=my_home.get_client)
+    add_health_routes(app, resolver=my_home.get_client)
+    add_settings_routes(app)
+    add_module_link_routes(app)
+    add_diagnostics_routes(app, resolver=my_home.get_client)
     logger.info("Routes added to FastAPI app")
 
   # Загружаем устройства из базы данных
   my_home.load_devices()
   logger.info(f"Loaded {len(my_home._devices)} devices")
+
+
+# При запуске через `uvicorn websrv:app` этот модуль импортируется напрямую.
+# Без явного вызова init() маршруты модулей (в том числе диагностики и бэкапов)
+# не добавляются в FastAPI-приложение.
+init()
 
 
 async def handle_device_command(message):
@@ -106,17 +135,14 @@ async def handle_device_command(message):
       logger.warning("Invalid command message: missing required fields")
       return
 
-    # Получаем клиент устройства
-    client = my_home.get_client(device_id)
-    if not client:
-      logger.warning(f"Device client not found: {device_id}")
-      return
-
-    # Отправляем команду на устройство в формате ESP: "code#value"
-    success = await send_command_to_device_ws(client, code, value)
-
-    if not success:
-      logger.error(f"Failed to send command to device {device_id}")
+    result = await DeviceCommandDispatcher(my_home.get_client).dispatch(DeviceCommand(
+      device_id=device_id,
+      code=code,
+      value=value,
+      source=str(message.get("source") or "ui_ws"),
+    ))
+    if not result.get("success"):
+      logger.error(f"Failed to send command to device {device_id}: {result.get('error')}")
 
   except Exception as e:
     logger.error(f"Error handling device command: {e}")
@@ -127,9 +153,15 @@ async def send_command_to_device_ws(client, code: str, value) -> bool:
   Отправляет команду на устройство через WebSocket в формате ESP
   """
   try:
-    # Используем метод send_command клиента
-    success = await client.send_command(code, value)
-    return success
+    result = await DeviceCommandDispatcher(
+      lambda device_id: client if device_id == client.device_id else None
+    ).dispatch(DeviceCommand(
+      device_id=client.device_id,
+      code=code,
+      value=value,
+      source="legacy_ws_helper",
+    ))
+    return bool(result.get("success"))
 
   except Exception as e:
     logger.error(f"Error sending command to device {client.device_id}: {e}")
@@ -319,6 +351,7 @@ async def startup_event():
   """Инициализация при запуске приложения"""
   try:
     logger.info("FastAPI startup event triggered")
+    diagnostics.record("system_log", "FastAPI startup", level="info")
 
     # Проверяем инициализацию my_home
     if my_home is None:
@@ -335,6 +368,17 @@ async def startup_event():
     ha_manager.set_my_home(my_home)
     await ha_manager.initialize()
     logger.success("HA Manager initialized")
+    
+    # Синхронизируем виртуальные порты с HA (после инициализации обычных портов)
+    try:
+        from models.virtual_ports_routes import sync_all_virtual_ports_to_ha
+        # Используем небольшую задержку, чтобы обычные порты успели синхронизироваться
+        import asyncio
+        await asyncio.sleep(2)
+        await sync_all_virtual_ports_to_ha()
+        logger.info("Virtual ports synced to HA")
+    except Exception as e:
+        logger.error(f"Error syncing virtual ports to HA: {e}")
   except Exception as e:
     logger.error(f"Error in startup event: {e}")
     import traceback
@@ -345,6 +389,7 @@ async def startup_event():
 async def shutdown_event():
   """Завершение работы приложения"""
   try:
+    diagnostics.record("system_log", "FastAPI shutdown", level="info")
     await ha_manager.shutdown()
     logger.success("HA Manager shutdown")
   except Exception as e:

@@ -280,6 +280,20 @@
                     </v-card>
                   </div>
                   
+                  <!-- Кнопка проверки связи с Home Assistant -->
+                  <div v-if="group.name === 'Home Assistant'" class="mb-3 d-flex justify-end">
+                    <v-btn
+                      color="primary"
+                      variant="tonal"
+                      prepend-icon="mdi-lan-connect"
+                      :loading="testingConnection"
+                      :disabled="!formData.ha_url || !formData.ha_token"
+                      @click="testConnection()"
+                    >
+                      Проверить связь
+                    </v-btn>
+                  </div>
+
                   <!-- Обычные поля (кроме настроек логирования) -->
                   <v-row v-if="group.name !== 'Настройки логирования'">
                     <v-col
@@ -662,6 +676,7 @@ const showModuleInfoDialog = ref(false)
 const selectedModule = ref(null)
 const testingHost = ref(false)
 const testingToken = ref(false)
+const testingConnection = ref(false)
 const testingGoogleSheet = ref(false)
 
 const schemaFields = computed(() => {
@@ -928,6 +943,48 @@ watch(showGoogleAuthInstructions, (newVal) => {
     loadGoogleAuthInstructions()
   }
 })
+
+const testConnection = async () => {
+  const haUrl = formData.value.ha_url
+  const haToken = formData.value.ha_token
+
+  if (!haUrl || !haUrl.trim()) {
+    messageStore.showError('Введите URL Home Assistant')
+    return
+  }
+  if (!haToken || !haToken.trim()) {
+    messageStore.showError('Введите токен Home Assistant')
+    return
+  }
+
+  testingConnection.value = true
+  try {
+    const hostRaw = await secureFetch(`/api/addon/config/homeassistant/test-host?ha_url=${encodeURIComponent(haUrl)}`, {
+      method: 'POST'
+    })
+    const hostResp = await hostRaw.json()
+    if (!hostResp.success) {
+      messageStore.showError(hostResp.error || 'Хост недоступен')
+      return
+    }
+
+    const tokenRaw = await secureFetch(`/api/addon/config/homeassistant/test-token?ha_url=${encodeURIComponent(haUrl)}&ha_token=${encodeURIComponent(haToken)}`, {
+      method: 'POST'
+    })
+    const tokenResp = await tokenRaw.json()
+    if (!tokenResp.success) {
+      messageStore.showError(tokenResp.error || 'Ошибка проверки токена')
+      return
+    }
+
+    messageStore.showSuccess('Связь с Home Assistant установлена')
+  } catch (err) {
+    console.error('Error testing HA connection:', err)
+    messageStore.showError(err.message || 'Ошибка при проверке связи')
+  } finally {
+    testingConnection.value = false
+  }
+}
 
 const testHost = async () => {
   const haUrl = formData.value.ha_url
